@@ -48,7 +48,7 @@ export type AppServerSpawner = (options: {
   command: string
   args: string[]
   cwd?: string
-  env?: NodeJS.ProcessEnv
+  env?: Record<string, string | undefined>
 }) => AppServerProcess
 
 export type AppServerClientOptions = {
@@ -56,7 +56,7 @@ export type AppServerClientOptions = {
   clientInfo?: Partial<AppServerClientInfo>
   command?: string
   cwd?: string
-  env?: NodeJS.ProcessEnv
+  env?: Record<string, string | undefined>
   now?: () => number
   requestTimeoutMs?: number
   requiredModels?: readonly string[]
