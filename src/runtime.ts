@@ -1,22 +1,22 @@
-import * as vm from "node:vm"
 import { randomUUID } from "node:crypto"
 import { readdir, readFile } from "node:fs/promises"
 import { dirname, isAbsolute, resolve } from "node:path"
+import { createContext, runInContext, Script } from "node:vm"
 import type {
-  AppServerAgentOptions,
   AppServerAgentHandle,
-  AppServerJSONValue,
+  AppServerAgentOptions,
   AppServerClient,
+  AppServerJSONValue,
   AppServerNormalizedEvent,
-  AppServerNormalizedEventListener,
+  AppServerNormalizedEventListener
 } from "./app-server.ts"
 import { WorkflowJournal } from "./workflow-journal.ts"
 import {
   resolveWorkflowCaps,
   WorkflowCanceledError,
-  WorkflowRunState,
   type WorkflowCapOptions,
-  type WorkflowUsage,
+  WorkflowRunState,
+  type WorkflowUsage
 } from "./workflow-state.ts"
 import { createWorkflowWorktree, type WorkflowWorktree } from "./worktree.ts"
 
@@ -25,98 +25,103 @@ export type JSONValue = JSONPrimitive | JSONArray | JSONObject
 export type JSONArray = JSONValue[]
 export type JSONObject = { [key: string]: JSONValue }
 
-export interface WorkflowPhase {
-  title: string
+export type WorkflowPhase = {
   detail?: string
   model?: string
-}
-
-export interface WorkflowMeta {
-  name: string
-  description: string
-  whenToUse?: string
-  phases?: WorkflowPhase[]
-}
-
-export interface LoadedWorkflowScript {
-  meta: WorkflowMeta
-  body: string
-}
-
-export interface WorkflowPhaseEvent {
-  type: "phase"
   title: string
-  detail: string | null
 }
 
-export interface WorkflowLogEvent {
-  type: "log"
+export type WorkflowMeta = {
+  description: string
+  name: string
+  phases?: WorkflowPhase[]
+  whenToUse?: string
+}
+
+export type LoadedWorkflowScript = {
+  body: string
+  meta: WorkflowMeta
+}
+
+export type WorkflowPhaseEvent = {
+  detail: string | null
+  title: string
+  type: "phase"
+}
+
+export type WorkflowLogEvent = {
   message: string
+  type: "log"
 }
 
 export type WorkflowEvent = WorkflowPhaseEvent | WorkflowLogEvent
 
-export interface WorkflowFailure {
-  kind: "parallel" | "pipeline"
+export type WorkflowFailure = {
   index: number
-  stage?: number
+  kind: "parallel" | "pipeline"
   message: string
+  stage?: number
 }
 
 export type WorkflowAgent = (
   prompt: string,
-  options?: JSONObject,
+  options?: JSONObject
 ) => JSONValue | Promise<JSONValue>
 
 export type WorkflowReference = string | { scriptPath: string }
 
 export type WorkflowChild = (
   reference: WorkflowReference,
-  args?: JSONValue,
+  args?: JSONValue
 ) => JSONValue | Promise<JSONValue>
 
-export interface OfflineBudgetOptions {
-  total?: number | null
+export type OfflineBudgetOptions = {
   spent?: number | (() => number)
+  total?: number | null
 }
 
-export interface WorkflowExecutionOptions {
-  args?: JSONValue
+export type WorkflowExecutionOptions = {
   agent?: WorkflowAgent
   appServer?: AppServerClient
-  workflow?: WorkflowChild
-  workflowDirectory?: string
-  cwd?: string
+  args?: JSONValue
   budget?: OfflineBudgetOptions
   caps?: WorkflowCapOptions
-  signal?: AbortSignal
-  transcriptDirectory?: string
-  resumeFromRunId?: string
-  fileName?: string
-  workflowRunId?: string
+  cwd?: string
   eventTimestamp?: () => number
+  fileName?: string
   onAgentEvent?: AppServerNormalizedEventListener
   onAgentStart?: (handle: AppServerAgentHandle) => void
+  resumeFromRunId?: string
+  signal?: AbortSignal
+  transcriptDirectory?: string
+  workflow?: WorkflowChild
+  workflowDirectory?: string
+  workflowRunId?: string
 }
 
-export interface WorkflowExecution {
-  meta: WorkflowMeta
-  result: JSONValue
+export type WorkflowExecution = {
+  agentEvents: AppServerNormalizedEvent[]
   events: WorkflowEvent[]
   failures: WorkflowFailure[]
-  workflowRunId: string
-  agentEvents: AppServerNormalizedEvent[]
-  usage: WorkflowUsage
   journalPath: string | null
+  meta: WorkflowMeta
+  result: JSONValue
+  usage: WorkflowUsage
+  workflowRunId: string
 }
 
 const DATE_ERROR =
   "Date.now() / new Date() are unavailable in workflow scripts (breaks resume). Stamp results after the workflow returns, or pass timestamps via args."
 const RANDOM_ERROR =
   "Math.random() is unavailable in workflow scripts (breaks resume). For N independent samples, include the index in the agent label or prompt."
+const NUMBER_LITERAL_PATTERN = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/
+const CONTINUED_LITERAL_PATTERN = /^(?:in|instanceof)\b/
+const HEX_DIGIT_PATTERN = /^[0-9a-fA-F]$/
+const IDENTIFIER_START_PATTERN = /^[A-Za-z_$]$/
+const WHITESPACE_PATTERN = /\s/
 export class WorkflowLoadError extends Error {
-  constructor(message: string) {
-    super(message)
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options)
     this.name = "WorkflowLoadError"
   }
 }
@@ -129,12 +134,14 @@ export class JSONBoundaryError extends Error {
 }
 
 class LiteralMetaParser {
+  private readonly fileName: string
   private index = 0
+  private readonly source: string
 
-  constructor(
-    private readonly source: string,
-    private readonly fileName: string,
-  ) {}
+  constructor(source: string, fileName: string) {
+    this.source = source
+    this.fileName = fileName
+  }
 
   parse(): LoadedWorkflowScript {
     this.skipTrivia()
@@ -149,7 +156,7 @@ class LiteralMetaParser {
 
     const sawLineBreak = this.skipTrivia()
     if (this.source[this.index] === ";") {
-      this.index++
+      this.index += 1
     } else if (this.index < this.source.length && !sawLineBreak) {
       this.fail("meta must be the first complete statement")
     } else if (this.canContinueLiteralExpression()) {
@@ -157,8 +164,8 @@ class LiteralMetaParser {
     }
 
     return {
-      meta: value as unknown as WorkflowMeta,
       body: this.source.slice(this.index),
+      meta: value as unknown as WorkflowMeta
     }
   }
 
@@ -166,20 +173,34 @@ class LiteralMetaParser {
     this.skipTrivia()
     const character = this.source[this.index]
 
-    if (character === "{") return this.parseObject()
-    if (character === "[") return this.parseArray()
-    if (character === "'" || character === '"') return this.parseString()
-    if (character === "-" || this.isDigit(character)) return this.parseNumber()
+    if (character === "{") {
+      return this.parseObject()
+    }
+    if (character === "[") {
+      return this.parseArray()
+    }
+    if (character === "'" || character === '"') {
+      return this.parseString()
+    }
+    if (character === "-" || this.isDigit(character)) {
+      return this.parseNumber()
+    }
 
     const word = this.readIdentifier()
-    if (word === "true") return true
-    if (word === "false") return false
-    if (word === "null") return null
+    if (word === "true") {
+      return true
+    }
+    if (word === "false") {
+      return false
+    }
+    if (word === "null") {
+      return null
+    }
 
     this.fail(
       word
         ? `meta contains non-literal identifier ${JSON.stringify(word)}`
-        : "meta value must be a pure object, array, string, number, boolean, or null literal",
+        : "meta value must be a pure object, array, string, number, boolean, or null literal"
     )
   }
 
@@ -189,7 +210,7 @@ class LiteralMetaParser {
     this.skipTrivia()
 
     if (this.source[this.index] === "}") {
-      this.index++
+      this.index += 1
       return result
     }
 
@@ -207,18 +228,18 @@ class LiteralMetaParser {
         configurable: true,
         enumerable: true,
         value,
-        writable: true,
+        writable: true
       })
 
       this.skipTrivia()
       if (this.source[this.index] === "}") {
-        this.index++
+        this.index += 1
         return result
       }
       this.expectCharacter(",")
       this.skipTrivia()
       if (this.source[this.index] === "}") {
-        this.index++
+        this.index += 1
         return result
       }
     }
@@ -232,7 +253,7 @@ class LiteralMetaParser {
     this.skipTrivia()
 
     if (this.source[this.index] === "]") {
-      this.index++
+      this.index += 1
       return result
     }
 
@@ -244,13 +265,13 @@ class LiteralMetaParser {
       result.push(this.parseLiteral())
       this.skipTrivia()
       if (this.source[this.index] === "]") {
-        this.index++
+        this.index += 1
         return result
       }
       this.expectCharacter(",")
       this.skipTrivia()
       if (this.source[this.index] === "]") {
-        this.index++
+        this.index += 1
         return result
       }
     }
@@ -260,29 +281,38 @@ class LiteralMetaParser {
 
   private parsePropertyKey(): string {
     const character = this.source[this.index]
-    if (character === "'" || character === '"') return this.parseString()
+    if (character === "'" || character === '"') {
+      return this.parseString()
+    }
 
     if (this.isDigit(character)) {
       const start = this.index
-      while (this.isDigit(this.source[this.index])) this.index++
+      while (this.isDigit(this.source[this.index])) {
+        this.index += 1
+      }
       return String(Number(this.source.slice(start, this.index)))
     }
 
     const key = this.readIdentifier()
     if (!key || this.source[this.index] === "[") {
-      this.fail("meta object keys must be static identifiers or string/number literals")
+      this.fail(
+        "meta object keys must be static identifiers or string/number literals"
+      )
     }
     return key
   }
 
   private parseString(): string {
     const quote = this.source[this.index]
-    this.index++
+    this.index += 1
     let result = ""
 
     while (this.index < this.source.length) {
-      const character = this.source[this.index++]
-      if (character === quote) return result
+      const character = this.source[this.index]
+      this.index += 1
+      if (character === quote) {
+        return result
+      }
       if (character === "\n" || character === "\r") {
         this.fail("meta strings cannot contain an unescaped line break")
       }
@@ -291,101 +321,131 @@ class LiteralMetaParser {
         continue
       }
 
-      if (this.index >= this.source.length) this.fail("unterminated meta string")
-      const escape = this.source[this.index++] ?? ""
-      const escapes: Record<string, string> = {
-        '"': '"',
-        "'": "'",
-        "\\": "\\",
-        b: "\b",
-        f: "\f",
-        n: "\n",
-        r: "\r",
-        t: "\t",
-        v: "\v",
-        0: "\0",
-      }
-      if (escape in escapes) {
-        result += escapes[escape]
-        continue
-      }
-      if (escape === "\n") continue
-      if (escape === "\r") {
-        if (this.source[this.index] === "\n") this.index++
-        continue
-      }
-      if (escape === "x") {
-        result += String.fromCharCode(this.readHex(2))
-        continue
-      }
-      if (escape === "u") {
-        if (this.source[this.index] === "{") {
-          this.index++
-          const start = this.index
-          while (this.isHexDigit(this.source[this.index])) this.index++
-          if (this.source[this.index] !== "}" || start === this.index) {
-            this.fail("invalid Unicode escape in meta string")
-          }
-          const codePoint = Number.parseInt(this.source.slice(start, this.index), 16)
-          this.index++
-          if (!Number.isInteger(codePoint) || codePoint > 0x10ffff) {
-            this.fail("invalid Unicode escape in meta string")
-          }
-          result += String.fromCodePoint(codePoint)
-          continue
-        }
-        result += String.fromCharCode(this.readHex(4))
-        continue
-      }
-      this.fail(`unsupported escape sequence \\${escape} in meta string`)
+      result += this.parseStringEscape()
     }
 
     this.fail("unterminated meta string")
   }
 
+  private parseStringEscape(): string {
+    if (this.index >= this.source.length) {
+      this.fail("unterminated meta string")
+    }
+    const escapeSeq = this.source[this.index] ?? ""
+    this.index += 1
+    const escapes: Record<string, string> = {
+      "'": "'",
+      '"': '"',
+      "\\": "\\",
+      0: "\0",
+      b: "\b",
+      f: "\f",
+      n: "\n",
+      r: "\r",
+      t: "\t",
+      v: "\v"
+    }
+    if (escapeSeq in escapes) {
+      return escapes[escapeSeq] ?? ""
+    }
+    if (escapeSeq === "\n") {
+      return ""
+    }
+    if (escapeSeq === "\r") {
+      if (this.source[this.index] === "\n") {
+        this.index += 1
+      }
+      return ""
+    }
+    if (escapeSeq === "x") {
+      return String.fromCharCode(this.readHex(2))
+    }
+    if (escapeSeq === "u") {
+      return this.parseUnicodeEscape()
+    }
+    this.fail(`unsupported escape sequence \\${escapeSeq} in meta string`)
+  }
+
+  private parseUnicodeEscape(): string {
+    if (this.source[this.index] !== "{") {
+      return String.fromCharCode(this.readHex(4))
+    }
+    this.index += 1
+    const start = this.index
+    while (this.isHexDigit(this.source[this.index])) {
+      this.index += 1
+    }
+    if (this.source[this.index] !== "}" || start === this.index) {
+      this.fail("invalid Unicode escape in meta string")
+    }
+    const codePoint = Number.parseInt(this.source.slice(start, this.index), 16)
+    this.index += 1
+    if (!Number.isInteger(codePoint) || codePoint > 0x10_ff_ff) {
+      this.fail("invalid Unicode escape in meta string")
+    }
+    return String.fromCodePoint(codePoint)
+  }
+
   private parseNumber(): number {
-    const match = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(
-      this.source.slice(this.index),
-    )
-    if (!match) this.fail("invalid numeric literal in meta")
+    const match = NUMBER_LITERAL_PATTERN.exec(this.source.slice(this.index))
+    if (!match) {
+      this.fail("invalid numeric literal in meta")
+    }
     this.index += match[0].length
     const value = Number(match[0])
-    if (!Number.isFinite(value)) this.fail("meta numbers must be finite")
+    if (!Number.isFinite(value)) {
+      this.fail("meta numbers must be finite")
+    }
     return value
   }
 
   private validateMeta(value: JSONValue): void {
-    if (!isPlainJSONObject(value)) this.fail("meta must be an object literal")
+    if (!isPlainJSONObject(value)) {
+      this.fail("meta must be an object literal")
+    }
     if (typeof value.name !== "string" || value.name.length === 0) {
       this.fail("meta.name is required and must be a non-empty string")
     }
-    if (typeof value.description !== "string" || value.description.length === 0) {
+    if (
+      typeof value.description !== "string" ||
+      value.description.length === 0
+    ) {
       this.fail("meta.description is required and must be a non-empty string")
     }
     if ("whenToUse" in value && typeof value.whenToUse !== "string") {
       this.fail("meta.whenToUse must be a string")
     }
     if ("phases" in value) {
-      if (!Array.isArray(value.phases)) this.fail("meta.phases must be an array")
-      for (const phase of value.phases) {
-        if (!isPlainJSONObject(phase) || typeof phase.title !== "string") {
-          this.fail("each meta.phases entry must have a string title")
-        }
-        if ("detail" in phase && typeof phase.detail !== "string") {
-          this.fail("meta phase detail must be a string")
-        }
-        if ("model" in phase && typeof phase.model !== "string") {
-          this.fail("meta phase model must be a string")
-        }
+      this.validatePhases(value.phases)
+    }
+  }
+
+  private validatePhases(phases: JSONValue): void {
+    if (!Array.isArray(phases)) {
+      this.fail("meta.phases must be an array")
+    }
+    for (const phase of phases) {
+      if (!isPlainJSONObject(phase) || typeof phase.title !== "string") {
+        this.fail("each meta.phases entry must have a string title")
+      }
+      if ("detail" in phase && typeof phase.detail !== "string") {
+        this.fail("meta phase detail must be a string")
+      }
+      if ("model" in phase && typeof phase.model !== "string") {
+        this.fail("meta phase model must be a string")
       }
     }
   }
 
   private readIdentifier(): string {
     const start = this.index
-    if (!this.isIdentifierStart(this.source[this.index])) return ""
-    this.index++
-    while (this.isIdentifierPart(this.source[this.index])) this.index++
+    if (!this.isIdentifierStart(this.source[this.index])) {
+      return ""
+    }
+    this.index += 1
+    while (this.isIdentifierPart(this.source[this.index])) {
+      this.index += 1
+    }
     return this.source.slice(start, this.index)
   }
 
@@ -394,52 +454,38 @@ class LiteralMetaParser {
     if (character !== undefined && ".([`+-*/%<>=!&|^?:,".includes(character)) {
       return true
     }
-    return /^(?:in|instanceof)\b/.test(this.source.slice(this.index))
+    return CONTINUED_LITERAL_PATTERN.test(this.source.slice(this.index))
   }
 
   private expectWord(word: string): void {
     this.skipTrivia()
-    if (this.readIdentifier() !== word) this.fail(`expected ${word}`)
+    if (this.readIdentifier() !== word) {
+      this.fail(`expected ${word}`)
+    }
   }
 
   private expectCharacter(character: string): void {
     if (this.source[this.index] !== character) {
       this.fail(`expected ${JSON.stringify(character)}`)
     }
-    this.index++
+    this.index += 1
   }
 
   private skipTrivia(): boolean {
     let sawLineBreak = false
     while (this.index < this.source.length) {
       const character = this.source[this.index]
-      if (character !== undefined && /\s/.test(character)) {
-        if (character === "\n" || character === "\r") sawLineBreak = true
-        this.index++
+      if (character !== undefined && WHITESPACE_PATTERN.test(character)) {
+        sawLineBreak ||= character === "\n" || character === "\r"
+        this.index += 1
         continue
       }
       if (this.source.startsWith("//", this.index)) {
-        this.index += 2
-        while (this.index < this.source.length && this.source[this.index] !== "\n") {
-          this.index++
-        }
+        this.skipLineComment()
         continue
       }
       if (this.source.startsWith("/*", this.index)) {
-        this.index += 2
-        let closed = false
-        while (this.index < this.source.length) {
-          if (this.source[this.index] === "\n" || this.source[this.index] === "\r") {
-            sawLineBreak = true
-          }
-          if (this.source.startsWith("*/", this.index)) {
-            this.index += 2
-            closed = true
-            break
-          }
-          this.index++
-        }
-        if (!closed) this.fail("unterminated comment in meta")
+        sawLineBreak ||= this.skipBlockComment()
         continue
       }
       break
@@ -447,9 +493,37 @@ class LiteralMetaParser {
     return sawLineBreak
   }
 
+  private skipLineComment(): void {
+    this.index += 2
+    while (
+      this.index < this.source.length &&
+      this.source[this.index] !== "\n"
+    ) {
+      this.index += 1
+    }
+  }
+
+  private skipBlockComment(): boolean {
+    this.index += 2
+    let sawLineBreak = false
+    while (this.index < this.source.length) {
+      const character = this.source[this.index]
+      sawLineBreak ||= character === "\n" || character === "\r"
+      if (this.source.startsWith("*/", this.index)) {
+        this.index += 2
+        return sawLineBreak
+      }
+      this.index += 1
+    }
+    this.fail("unterminated comment in meta")
+  }
+
   private readHex(length: number): number {
     const value = this.source.slice(this.index, this.index + length)
-    if (value.length !== length || [...value].some((character) => !this.isHexDigit(character))) {
+    if (
+      value.length !== length ||
+      [...value].some((character) => !this.isHexDigit(character))
+    ) {
       this.fail("invalid hexadecimal escape in meta string")
     }
     this.index += length
@@ -465,11 +539,11 @@ class LiteralMetaParser {
   }
 
   private isHexDigit(character: string | undefined): boolean {
-    return character !== undefined && /^[0-9a-fA-F]$/.test(character)
+    return character !== undefined && HEX_DIGIT_PATTERN.test(character)
   }
 
   private isIdentifierStart(character: string | undefined): boolean {
-    return character !== undefined && /^[A-Za-z_$]$/.test(character)
+    return character !== undefined && IDENTIFIER_START_PATTERN.test(character)
   }
 
   private isIdentifierPart(character: string | undefined): boolean {
@@ -479,7 +553,7 @@ class LiteralMetaParser {
 
 export function parseWorkflowScript(
   source: string,
-  fileName = "workflow.js",
+  fileName = "workflow.js"
 ): LoadedWorkflowScript {
   if (typeof source !== "string") {
     throw new WorkflowLoadError(`${fileName}: workflow source must be a string`)
@@ -488,36 +562,56 @@ export function parseWorkflowScript(
 }
 
 function isPlainJSONObject(value: unknown): value is JSONObject {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false
+  }
   const prototype = Object.getPrototypeOf(value)
-  if (prototype === null) return true
-  if (Object.getPrototypeOf(prototype) !== null) return false
-  const constructor = Object.getOwnPropertyDescriptor(prototype, "constructor")?.value
-  return typeof constructor === "function" && constructor.name === "Object"
+  if (prototype === null) {
+    return true
+  }
+  if (Object.getPrototypeOf(prototype) !== null) {
+    return false
+  }
+  const objectConstructor = Object.getOwnPropertyDescriptor(
+    prototype,
+    "constructor"
+  )?.value
+  return (
+    typeof objectConstructor === "function" &&
+    objectConstructor.name === "Object"
+  )
 }
 
 function describeError(error: unknown): string {
   if (typeof error === "object" && error !== null) {
-    const message = (error as { message?: unknown }).message
-    if (typeof message === "string") return message
+    const { message } = error as { message?: unknown }
+    if (typeof message === "string") {
+      return message
+    }
   }
-  if (typeof error === "string") return error
+  if (typeof error === "string") {
+    return error
+  }
   return String(error)
 }
 
 function cloneJSONValue(
   value: unknown,
   path: string,
-  active: WeakSet<object> = new WeakSet(),
+  active: WeakSet<object> = new WeakSet()
 ): JSONValue {
-  if (value === null) return null
+  if (value === null) {
+    return null
+  }
   switch (typeof value) {
     case "string":
     case "boolean":
       return value
     case "number":
       if (!Number.isFinite(value)) {
-        throw new JSONBoundaryError(`${path}: non-finite numbers are not JSON-compatible`)
+        throw new JSONBoundaryError(
+          `${path}: non-finite numbers are not JSON-compatible`
+        )
       }
       return value
     case "undefined":
@@ -530,81 +624,128 @@ function cloneJSONValue(
       throw new JSONBoundaryError(`${path}: bigint is not JSON-compatible`)
     case "object":
       break
+    default:
+      throw new JSONBoundaryError(`${path}: unsupported JSON value`)
   }
 
   if (active.has(value)) {
-    throw new JSONBoundaryError(`${path}: cyclic values are not JSON-compatible`)
+    throw new JSONBoundaryError(
+      `${path}: cyclic values are not JSON-compatible`
+    )
   }
   active.add(value)
 
   try {
     if (Array.isArray(value)) {
-      const result: JSONArray = []
-      for (let index = 0; index < value.length; index++) {
-        if (!Object.prototype.hasOwnProperty.call(value, index)) {
-          throw new JSONBoundaryError(`${path}[${index}]: array holes are not JSON-compatible`)
-        }
-        const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
-        if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
-          throw new JSONBoundaryError(`${path}[${index}]: accessor or non-enumerable properties are not JSON-compatible`)
-        }
-        result.push(cloneJSONValue(descriptor.value, `${path}[${index}]`, active))
-      }
-      for (const key of Reflect.ownKeys(value)) {
-        if (key === "length") continue
-        if (typeof key === "symbol") {
-          throw new JSONBoundaryError(`${path}: symbol keys are not JSON-compatible`)
-        }
-        const numericIndex = Number(key)
-        if (!Number.isInteger(numericIndex) || numericIndex < 0 || numericIndex >= value.length || String(numericIndex) !== key) {
-          throw new JSONBoundaryError(`${path}: array properties must be indexed JSON values`)
-        }
-        const descriptor = Object.getOwnPropertyDescriptor(value, key)
-        if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
-          throw new JSONBoundaryError(`${path}[${key}]: accessor or non-enumerable properties are not JSON-compatible`)
-        }
-      }
-      return result
+      return cloneJSONArray(value, path, active)
     }
-
-    if (!isPlainJSONObject(value)) {
-      throw new JSONBoundaryError(`${path}: only plain objects are JSON-compatible`)
-    }
-    const result: JSONObject = {}
-    for (const key of Reflect.ownKeys(value)) {
-      if (typeof key === "symbol") {
-        throw new JSONBoundaryError(`${path}: symbol keys are not JSON-compatible`)
-      }
-      const descriptor = Object.getOwnPropertyDescriptor(value, key)
-      if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
-        throw new JSONBoundaryError(`${path}.${key}: accessor or non-enumerable properties are not JSON-compatible`)
-      }
-      Object.defineProperty(result, key, {
-        configurable: true,
-        enumerable: true,
-        value: cloneJSONValue(descriptor.value, `${path}.${key}`, active),
-        writable: true,
-      })
-    }
-    return result
+    return cloneJSONObject(value, path, active)
   } finally {
     active.delete(value)
   }
 }
 
-function makeBoundaryError(createError: (message: string) => unknown, error: unknown): never {
+function cloneJSONArray(
+  value: unknown[],
+  path: string,
+  active: WeakSet<object>
+): JSONArray {
+  const result: JSONArray = []
+  for (let index = 0; index < value.length; index += 1) {
+    if (!Object.hasOwn(value, index)) {
+      throw new JSONBoundaryError(
+        `${path}[${index}]: array holes are not JSON-compatible`
+      )
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
+    if (!(descriptor?.enumerable && "value" in descriptor)) {
+      throw new JSONBoundaryError(
+        `${path}[${index}]: accessor or non-enumerable properties are not JSON-compatible`
+      )
+    }
+    result.push(cloneJSONValue(descriptor.value, `${path}[${index}]`, active))
+  }
+  for (const key of Reflect.ownKeys(value)) {
+    if (key === "length") {
+      continue
+    }
+    if (typeof key === "symbol") {
+      throw new JSONBoundaryError(
+        `${path}: symbol keys are not JSON-compatible`
+      )
+    }
+    const numericIndex = Number(key)
+    if (
+      !Number.isInteger(numericIndex) ||
+      numericIndex < 0 ||
+      numericIndex >= value.length ||
+      String(numericIndex) !== key
+    ) {
+      throw new JSONBoundaryError(
+        `${path}: array properties must be indexed JSON values`
+      )
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)
+    if (!(descriptor?.enumerable && "value" in descriptor)) {
+      throw new JSONBoundaryError(
+        `${path}[${key}]: accessor or non-enumerable properties are not JSON-compatible`
+      )
+    }
+  }
+  return result
+}
+
+function cloneJSONObject(
+  value: object,
+  path: string,
+  active: WeakSet<object>
+): JSONObject {
+  if (!isPlainJSONObject(value)) {
+    throw new JSONBoundaryError(
+      `${path}: only plain objects are JSON-compatible`
+    )
+  }
+  const result: JSONObject = {}
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key === "symbol") {
+      throw new JSONBoundaryError(
+        `${path}: symbol keys are not JSON-compatible`
+      )
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)
+    if (!(descriptor?.enumerable && "value" in descriptor)) {
+      throw new JSONBoundaryError(
+        `${path}.${key}: accessor or non-enumerable properties are not JSON-compatible`
+      )
+    }
+    Object.defineProperty(result, key, {
+      configurable: true,
+      enumerable: true,
+      value: cloneJSONValue(descriptor.value, `${path}.${key}`, active),
+      writable: true
+    })
+  }
+  return result
+}
+
+function makeBoundaryError(
+  createError: (message: string) => unknown,
+  error: unknown
+): never {
   throw createError(describeError(error))
 }
 
 function makeSafeHostFunction<T extends (...args: never[]) => unknown>(
   handler: T,
-  createError: (message: string) => unknown,
+  createError: (message: string) => unknown
 ): T {
   const safe = (...args: never[]) => {
     try {
       const result = handler(...args)
       if (result instanceof Promise) {
-        return result.catch((error: unknown) => makeBoundaryError(createError, error))
+        return result.catch((error: unknown) =>
+          makeBoundaryError(createError, error)
+        )
       }
       return result
     } catch (error) {
@@ -658,23 +799,23 @@ const VM_SETUP = `
 })()
 `
 
-interface WorkflowRunContext {
-  readonly state: WorkflowRunState
-  readonly journal: WorkflowJournal | null
-  readonly resumeEnabled: boolean
-  readonly workflowDirectory: string
-  readonly rootOptions: WorkflowExecutionOptions
+type WorkflowRunContext = {
   readonly agentEvents: AppServerNormalizedEvent[]
+  readonly journal: WorkflowJournal | null
   readonly onAgentEvent: AppServerNormalizedEventListener
   replayIndex: number
   replayMissed: boolean
+  readonly resumeEnabled: boolean
+  readonly rootOptions: WorkflowExecutionOptions
+  readonly state: WorkflowRunState
+  readonly workflowDirectory: string
 }
 
-interface InternalWorkflowExecution {
-  meta: WorkflowMeta
-  result: JSONValue
+type InternalWorkflowExecution = {
   events: WorkflowEvent[]
   failures: WorkflowFailure[]
+  meta: WorkflowMeta
+  result: JSONValue
 }
 
 const NESTING_ERROR =
@@ -682,49 +823,73 @@ const NESTING_ERROR =
 
 export async function runWorkflowScript(
   source: string,
-  options: WorkflowExecutionOptions = {},
+  options: WorkflowExecutionOptions = {}
 ): Promise<WorkflowExecution> {
   const fileName = options.fileName ?? "workflow.js"
   const loaded = parseWorkflowScript(source, fileName)
-  const workflowRunId = options.resumeFromRunId ?? options.workflowRunId ?? `workflow-${randomUUID()}`
+  const workflowRunId =
+    options.resumeFromRunId ??
+    options.workflowRunId ??
+    `workflow-${randomUUID()}`
   const budgetTotal = options.budget?.total ?? null
-  if (budgetTotal !== null && (!Number.isFinite(budgetTotal) || budgetTotal < 0)) {
-    throw new TypeError("budget.total must be null or a finite non-negative number")
+  if (
+    budgetTotal !== null &&
+    (!Number.isFinite(budgetTotal) || budgetTotal < 0)
+  ) {
+    throw new TypeError(
+      "budget.total must be null or a finite non-negative number"
+    )
   }
   const state = new WorkflowRunState({
-    workflowRunId,
-    caps: resolveWorkflowCaps(options.caps),
     budgetTotal,
-    spentSource: options.budget?.spent ?? 0,
+    caps: resolveWorkflowCaps(options.caps),
     signal: options.signal,
+    spentSource: options.budget?.spent ?? 0,
+    workflowRunId
   })
-  const transcriptDirectory = options.transcriptDirectory
-    ?? (options.appServer !== undefined || options.resumeFromRunId !== undefined
-      ? resolve(process.cwd(), ".verification-artifacts", "workflows", workflowRunId)
+  const transcriptDirectory =
+    options.transcriptDirectory ??
+    (options.appServer !== undefined || options.resumeFromRunId !== undefined
+      ? resolve(
+          process.cwd(),
+          ".verification-artifacts",
+          "workflows",
+          workflowRunId
+        )
       : null)
-  const journal = transcriptDirectory === null ? null : await WorkflowJournal.open(transcriptDirectory)
+  const journal =
+    transcriptDirectory === null
+      ? null
+      : await WorkflowJournal.open(transcriptDirectory)
   const agentEvents: AppServerNormalizedEvent[] = []
   const context: WorkflowRunContext = {
-    state,
-    journal,
-    resumeEnabled: options.resumeFromRunId !== undefined,
-    workflowDirectory: options.workflowDirectory ?? resolve(process.cwd(), ".codex", "workflows"),
-    rootOptions: options,
     agentEvents,
+    journal,
     onAgentEvent: (event) => {
       agentEvents.push(event)
       options.onAgentEvent?.(event)
     },
     replayIndex: 0,
     replayMissed: false,
+    resumeEnabled: options.resumeFromRunId !== undefined,
+    rootOptions: options,
+    state,
+    workflowDirectory:
+      options.workflowDirectory ?? resolve(process.cwd(), ".codex", "workflows")
   }
-  const execution = await executeWorkflow(loaded, options.args, fileName, 0, context)
+  const execution = await executeWorkflow(
+    loaded,
+    options.args,
+    fileName,
+    0,
+    context
+  )
   return {
     ...execution,
-    workflowRunId,
     agentEvents,
-    usage: state.usage,
     journalPath: journal?.path ?? null,
+    usage: state.usage,
+    workflowRunId
   }
 }
 
@@ -733,7 +898,7 @@ async function executeWorkflow(
   input: JSONValue | undefined,
   fileName: string,
   depth: number,
-  runContext: WorkflowRunContext,
+  runContext: WorkflowRunContext
 ): Promise<InternalWorkflowExecution> {
   const events: WorkflowEvent[] = []
   const failures: WorkflowFailure[] = []
@@ -741,66 +906,112 @@ async function executeWorkflow(
   const options = runContext.rootOptions
   const { state } = runContext
 
-  const contextInput = input === undefined ? undefined : JSON.stringify(cloneJSONValue(input, "args"))
-  const context = vm.createContext({ __workflowInputJSON: contextInput })
-  vm.runInContext(VM_SETUP, context, { filename: `${fileName}:setup` })
-  const createError = vm.runInContext("(message) => new Error(message)", context) as (message: string) => unknown
+  const contextInput =
+    input === undefined
+      ? undefined
+      : JSON.stringify(cloneJSONValue(input, "args"))
+  const context = createContext({ __workflowInputJSON: contextInput })
+  runInContext(VM_SETUP, context, { filename: `${fileName}:setup` })
+  const createError = runInContext(
+    "(message) => new Error(message)",
+    context
+  ) as (message: string) => unknown
 
-  const marshal = (value: JSONValue, path: string): JSONValue => {
-    const safeValue = cloneJSONValue(value, path)
+  const marshal = (boundaryValue: JSONValue, path: string): JSONValue => {
+    const safeValue = cloneJSONValue(boundaryValue, path)
     const contextRecord = context as unknown as Record<string, unknown>
     contextRecord.__workflowBoundaryJSON = JSON.stringify(safeValue)
     try {
-      return vm.runInContext("JSON.parse(__workflowBoundaryJSON)", context) as JSONValue
+      return runInContext(
+        "JSON.parse(__workflowBoundaryJSON)",
+        context
+      ) as JSONValue
     } finally {
-      delete contextRecord.__workflowBoundaryJSON
+      contextRecord.__workflowBoundaryJSON = undefined
     }
   }
 
   const contextRecord = context as unknown as Record<string, unknown>
-  contextRecord.args = input === undefined ? undefined : vm.runInContext("JSON.parse(__workflowInputJSON)", context)
-  delete contextRecord.__workflowInputJSON
+  contextRecord.args =
+    input === undefined
+      ? undefined
+      : runInContext("JSON.parse(__workflowInputJSON)", context)
+  contextRecord.__workflowInputJSON = undefined
 
-  const budgetSpent = makeSafeHostFunction(() => state.budget.spent(), createError)
-  const budgetRemaining = makeSafeHostFunction(() => state.budget.remaining(), createError)
-  const budget = Object.freeze(Object.assign(Object.create(null), {
-    total: state.budget.total,
-    spent: budgetSpent,
-    remaining: budgetRemaining,
-  }))
+  const budgetSpent = makeSafeHostFunction(
+    () => state.budget.spent(),
+    createError
+  )
+  const budgetRemaining = makeSafeHostFunction(
+    () => state.budget.remaining(),
+    createError
+  )
+  const budget = Object.freeze(
+    Object.assign(Object.create(null), {
+      remaining: budgetRemaining,
+      spent: budgetSpent,
+      total: state.budget.total
+    })
+  )
 
-  const runLiveAgent = async (prompt: string, agentOptions: JSONObject | undefined, agentId: string): Promise<JSONValue> => {
+  const runLiveAgent = async (
+    prompt: string,
+    agentOptions: JSONObject | undefined,
+    agentId: string
+  ): Promise<JSONValue> => {
     state.budget.assertAvailable()
-    const requestedCwd = typeof agentOptions?.cwd === "string"
-      ? agentOptions.cwd
-      : options.cwd ?? process.cwd()
+    const requestedCwd =
+      typeof agentOptions?.cwd === "string"
+        ? agentOptions.cwd
+        : (options.cwd ?? process.cwd())
     const isolation = agentOptions?.isolation === "worktree"
     let worktree: WorkflowWorktree | null = null
     try {
-      if (isolation) worktree = await createWorkflowWorktree(requestedCwd, state.workflowRunId, state.nextWorktreeNumber())
+      if (isolation) {
+        worktree = await createWorkflowWorktree(
+          requestedCwd,
+          state.workflowRunId,
+          state.nextWorktreeNumber()
+        )
+      }
       const callOptions = {
         ...(agentOptions ?? {}),
         ...(isolation ? { sandbox: "workspace-write" } : {}),
-        ...(worktree === null && options.cwd === undefined ? {} : { cwd: worktree?.path ?? requestedCwd }),
+        ...(worktree === null && options.cwd === undefined
+          ? {}
+          : { cwd: worktree?.path ?? requestedCwd })
       } satisfies JSONObject
-      const requestedModel = typeof (callOptions as JSONObject).model === "string" ? (callOptions as JSONObject).model as string : "unknown"
+      const requestedModel =
+        typeof (callOptions as JSONObject).model === "string"
+          ? ((callOptions as JSONObject).model as string)
+          : "unknown"
       state.markLiveAgent(requestedModel)
       if (options.agent) {
-        return await waitForCancellation(Promise.resolve(options.agent(prompt, callOptions)), state.signal)
+        return await waitForCancellation(
+          Promise.resolve(options.agent(prompt, callOptions)),
+          state.signal
+        )
       }
-      if (!options.appServer) throw new Error("agent() is unavailable in the offline workflow runtime")
+      if (!options.appServer) {
+        throw new Error(
+          "agent() is unavailable in the offline workflow runtime"
+        )
+      }
       const handle = await options.appServer.startAgent(prompt, {
         ...(callOptions as unknown as AppServerAgentOptions),
-        workflowRunId: state.workflowRunId,
         agentId,
         eventSink: runContext.onAgentEvent,
         eventTimestamp: options.eventTimestamp,
+        workflowRunId: state.workflowRunId
       })
       const unregister = state.registerHandle(handle)
       try {
         options.onAgentStart?.(handle)
         const call = await waitForCancellation(handle.result(), state.signal)
-        state.budget.recordTokens(extractUsageTokens(call.evidence.usage), requestedModel)
+        state.budget.recordTokens(
+          extractUsageTokens(call.evidence.usage),
+          requestedModel
+        )
         return call.result
       } finally {
         unregister()
@@ -810,84 +1021,158 @@ async function executeWorkflow(
     }
   }
 
-  const runAgent: WorkflowAgent = async (prompt, agentOptions) => {
+  const runAgent: WorkflowAgent = (prompt, agentOptions) => {
     const agentId = state.reserveAgent()
-    const key = runContext.journal?.keyFor(state.currentCallChain, prompt, agentOptions) ?? null
+    const key =
+      runContext.journal?.keyFor(
+        state.currentCallChain,
+        prompt,
+        agentOptions
+      ) ?? null
     state.currentCallChain = key ?? state.currentCallChain
-    const replayIndex = runContext.replayIndex++
-    const replay = runContext.resumeEnabled && !runContext.replayMissed && key !== null
-      ? runContext.journal?.replay(replayIndex, key) ?? null
-      : null
+    const { replayIndex } = runContext
+    runContext.replayIndex += 1
+    const replay =
+      runContext.resumeEnabled && !runContext.replayMissed && key !== null
+        ? (runContext.journal?.replay(replayIndex, key) ?? null)
+        : null
     if (replay !== null) {
-      state.markReplayedAgent(typeof agentOptions?.model === "string" ? agentOptions.model : "unknown")
+      state.markReplayedAgent(
+        typeof agentOptions?.model === "string" ? agentOptions.model : "unknown"
+      )
       return cloneJSONValue(replay.result, "replayed agent result")
     }
-    if (runContext.resumeEnabled && key !== null) runContext.replayMissed = true
-    const started = key === null || runContext.journal === null
-      ? Promise.resolve()
-      : runContext.journal.appendStarted({ key, agentId })
+    if (runContext.resumeEnabled && key !== null) {
+      runContext.replayMissed = true
+    }
+    const started =
+      key === null || runContext.journal === null
+        ? Promise.resolve()
+        : runContext.journal.appendStarted({ agentId, key })
     return state.scheduleAgent(async () => {
       await started
       const result = await runLiveAgent(prompt, agentOptions, agentId)
       if (key !== null && runContext.journal !== null) {
-        await runContext.journal.appendResult({ key, agentId, result: cloneJSONValue(result, "agent result") })
+        await runContext.journal.appendResult({
+          agentId,
+          key,
+          result: cloneJSONValue(result, "agent result")
+        })
       }
       return result
     })
   }
 
-  const agent = makeSafeHostFunction(async (prompt: unknown, rawOptions?: unknown) => {
-    if (typeof prompt !== "string") throw new TypeError("agent() prompt must be a string")
-    let agentOptions: JSONObject | undefined
-    if (rawOptions !== undefined) {
-      if (!isPlainJSONObject(rawOptions)) throw new TypeError("agent() options must be a plain object")
-      agentOptions = cloneJSONValue(rawOptions, "agent options") as JSONObject
-    }
-    if (agentOptions === undefined && currentPhase !== null) {
-      agentOptions = { phase: currentPhase }
-    } else if (agentOptions !== undefined && agentOptions.phase === undefined && currentPhase !== null) {
-      agentOptions = { ...agentOptions, phase: currentPhase }
-    }
-    const result = await runAgent(prompt, agentOptions)
-    return marshal(result, "agent result")
-  }, createError)
+  const agent = makeSafeHostFunction(
+    async (prompt: unknown, rawOptions?: unknown) => {
+      if (typeof prompt !== "string") {
+        throw new TypeError("agent() prompt must be a string")
+      }
+      let agentOptions: JSONObject | undefined
+      if (rawOptions !== undefined) {
+        if (!isPlainJSONObject(rawOptions)) {
+          throw new TypeError("agent() options must be a plain object")
+        }
+        agentOptions = cloneJSONValue(rawOptions, "agent options") as JSONObject
+      }
+      if (agentOptions === undefined && currentPhase !== null) {
+        agentOptions = { phase: currentPhase }
+      } else if (
+        agentOptions !== undefined &&
+        agentOptions.phase === undefined &&
+        currentPhase !== null
+      ) {
+        agentOptions = { ...agentOptions, phase: currentPhase }
+      }
+      const result = await runAgent(prompt, agentOptions)
+      return marshal(result, "agent result")
+    },
+    createError
+  )
 
-  const runWorkflow = async (reference: WorkflowReference, childArgs: JSONValue | undefined): Promise<JSONValue> => {
-    if (depth >= state.caps.maxWorkflowDepth) throw new Error(NESTING_ERROR)
-    if (options.workflow) return options.workflow(reference, childArgs)
-    const child = await loadReferencedWorkflow(reference, fileName, runContext.workflowDirectory)
-    const childExecution = await executeWorkflow(child.loaded, childArgs, child.fileName, depth + 1, runContext)
+  const runWorkflow = async (
+    reference: WorkflowReference,
+    childArgs: JSONValue | undefined
+  ): Promise<JSONValue> => {
+    if (depth >= state.caps.maxWorkflowDepth) {
+      throw new Error(NESTING_ERROR)
+    }
+    if (options.workflow) {
+      return options.workflow(reference, childArgs)
+    }
+    const child = await loadReferencedWorkflow(
+      reference,
+      fileName,
+      runContext.workflowDirectory
+    )
+    const childExecution = await executeWorkflow(
+      child.loaded,
+      childArgs,
+      child.fileName,
+      depth + 1,
+      runContext
+    )
     failures.push(...childExecution.failures)
     return childExecution.result
   }
-  const workflow = makeSafeHostFunction(async (rawReference: unknown, rawArgs?: unknown) => {
-    if (typeof rawReference !== "string" && !isPlainJSONObject(rawReference)) {
-      throw new TypeError("workflow() reference must be a name or { scriptPath } object")
-    }
-    if (isPlainJSONObject(rawReference) && typeof rawReference.scriptPath !== "string") {
-      throw new TypeError("workflow() reference.scriptPath must be a string")
-    }
-    const reference = cloneJSONValue(rawReference, "workflow reference") as WorkflowReference
-    const childArgs = rawArgs === undefined ? undefined : cloneJSONValue(rawArgs, "workflow args")
-    return marshal(await runWorkflow(reference, childArgs), "workflow result")
-  }, createError)
+  const workflow = makeSafeHostFunction(
+    async (rawReference: unknown, rawArgs?: unknown) => {
+      if (
+        typeof rawReference !== "string" &&
+        !isPlainJSONObject(rawReference)
+      ) {
+        throw new TypeError(
+          "workflow() reference must be a name or { scriptPath } object"
+        )
+      }
+      if (
+        isPlainJSONObject(rawReference) &&
+        typeof rawReference.scriptPath !== "string"
+      ) {
+        throw new TypeError("workflow() reference.scriptPath must be a string")
+      }
+      const reference = cloneJSONValue(
+        rawReference,
+        "workflow reference"
+      ) as WorkflowReference
+      const childArgs =
+        rawArgs === undefined
+          ? undefined
+          : cloneJSONValue(rawArgs, "workflow args")
+      return marshal(await runWorkflow(reference, childArgs), "workflow result")
+    },
+    createError
+  )
 
   const phase = makeSafeHostFunction((title: unknown) => {
-    if (typeof title !== "string") throw new TypeError("phase() title must be a string")
+    if (typeof title !== "string") {
+      throw new TypeError("phase() title must be a string")
+    }
     currentPhase = title
-    const configured = loaded.meta.phases?.find((entry) => entry.title === title)
-    events.push({ type: "phase", title, detail: configured?.detail ?? null })
+    const configured = loaded.meta.phases?.find(
+      (entry) => entry.title === title
+    )
+    events.push({ detail: configured?.detail ?? null, title, type: "phase" })
   }, createError)
 
   const log = makeSafeHostFunction((message: unknown) => {
-    if (typeof message !== "string") throw new TypeError("log() message must be a string")
-    events.push({ type: "log", message })
+    if (typeof message !== "string") {
+      throw new TypeError("log() message must be a string")
+    }
+    events.push({ message, type: "log" })
   }, createError)
 
-  const assertCollection = (name: string, value: unknown): value is unknown[] => {
-    if (!Array.isArray(value)) throw new TypeError(`${name}() requires an array`)
-    if (value.length > state.caps.maxBoundaryItems) {
-      throw new RangeError(`array length ${value.length} exceeds the maximum of ${state.caps.maxBoundaryItems} supported across the workflow VM boundary`)
+  const assertCollection = (
+    name: string,
+    collection: unknown
+  ): collection is unknown[] => {
+    if (!Array.isArray(collection)) {
+      throw new TypeError(`${name}() requires an array`)
+    }
+    if (collection.length > state.caps.maxBoundaryItems) {
+      throw new RangeError(
+        `array length ${collection.length} exceeds the maximum of ${state.caps.maxBoundaryItems} supported across the workflow VM boundary`
+      )
     }
     return true
   }
@@ -897,41 +1182,90 @@ async function executeWorkflow(
     const slots = (thunks as unknown[]).map((thunk, index) =>
       Promise.resolve()
         .then(() => {
-          if (typeof thunk !== "function") throw new TypeError("parallel() entries must be thunks")
+          if (typeof thunk !== "function") {
+            throw new TypeError("parallel() entries must be thunks")
+          }
           return (thunk as () => unknown)()
         })
-        .then((value) => marshal(value as JSONValue, `parallel[${index}]`))
+        .then((slotValue) =>
+          marshal(slotValue as JSONValue, `parallel[${index}]`)
+        )
         .catch((error: unknown) => {
-          failures.push({ kind: "parallel", index, message: describeError(error) })
+          failures.push({
+            index,
+            kind: "parallel",
+            message: describeError(error)
+          })
           return null
-        }),
+        })
     )
-    return Promise.all(slots).then((results) => marshal(results, "parallel result"))
+    return Promise.all(slots).then((results) =>
+      marshal(results, "parallel result")
+    )
   }, createError)
 
-  const pipeline = makeSafeHostFunction((items: unknown, ...stages: unknown[]) => {
-    assertCollection("pipeline", items)
-    const itemList = items as unknown[]
-    const results = itemList.map((item, index) => (async () => {
-      let previous: unknown = item
-      for (let stage = 0; stage < stages.length; stage++) {
+  const pipeline = makeSafeHostFunction(
+    (items: unknown, ...stages: unknown[]) => {
+      assertCollection("pipeline", items)
+      const itemList = items as unknown[]
+      const runStages = async (
+        original: unknown,
+        index: number,
+        previous: unknown,
+        stage: number
+      ): Promise<JSONValue> => {
+        if (stage >= stages.length) {
+          return previous as JSONValue
+        }
         try {
           const callback = stages[stage]
-          if (typeof callback !== "function") throw new TypeError("pipeline() stages must be functions")
-          previous = await (callback as (previous: unknown, original: unknown, index: number) => unknown)(previous, item, index)
-          previous = marshal(previous as JSONValue, `pipeline[${index}][${stage}]`)
+          if (typeof callback !== "function") {
+            throw new TypeError("pipeline() stages must be functions")
+          }
+          const next = await (
+            callback as (
+              previous: unknown,
+              original: unknown,
+              index: number
+            ) => unknown
+          )(previous, original, index)
+          return runStages(
+            original,
+            index,
+            marshal(next as JSONValue, `pipeline[${index}][${stage}]`),
+            stage + 1
+          )
         } catch (error) {
-          failures.push({ kind: "pipeline", index, stage, message: describeError(error) })
+          failures.push({
+            index,
+            kind: "pipeline",
+            message: describeError(error),
+            stage
+          })
           return null
         }
       }
-      return previous as JSONValue
-    })())
-    return Promise.all(results).then((values) => marshal(values, "pipeline result"))
-  }, createError)
+      const results = itemList.map((item, index) =>
+        runStages(item, index, item, 0)
+      )
+      return Promise.all(results).then((values) =>
+        marshal(values, "pipeline result")
+      )
+    },
+    createError
+  )
 
-  contextRecord.__workflowBindings = { agent, parallel, pipeline, phase, log, workflow, budget }
-  vm.runInContext(`
+  contextRecord.__workflowBindings = {
+    agent,
+    budget,
+    log,
+    parallel,
+    phase,
+    pipeline,
+    workflow
+  }
+  runInContext(
+    `
     (() => {
       const host = __workflowBindings
       globalThis.agent = async (...values) => host.agent(...values)
@@ -947,72 +1281,119 @@ async function executeWorkflow(
       }))
       delete globalThis.__workflowBindings
     })()
-  `, context, { filename: `${fileName}:bindings` })
-  delete contextRecord.__workflowBindings
+  `,
+    context,
+    { filename: `${fileName}:bindings` }
+  )
+  contextRecord.__workflowBindings = undefined
 
-  let script: vm.Script
+  let script: Script
   try {
-    script = new vm.Script(`(async function __workflowBody() {\n"use strict";\n${loaded.body}\n})()`, { filename: fileName })
+    script = new Script(
+      `(async function __workflowBody() {\n"use strict";\n${loaded.body}\n})()`,
+      { filename: fileName }
+    )
   } catch (error) {
-    throw new WorkflowLoadError(`${fileName}: ${describeError(error)}`)
+    throw new WorkflowLoadError(`${fileName}: ${describeError(error)}`, {
+      cause: error
+    })
   }
 
   const value = await script.runInContext(context)
-  return { meta: loaded.meta, result: cloneJSONValue(value, "workflow result"), events, failures }
+  return {
+    events,
+    failures,
+    meta: loaded.meta,
+    result: cloneJSONValue(value, "workflow result")
+  }
 }
 
 async function loadReferencedWorkflow(
   reference: WorkflowReference,
   currentFileName: string,
-  workflowDirectory: string,
+  workflowDirectory: string
 ): Promise<{ loaded: LoadedWorkflowScript; fileName: string }> {
   if (typeof reference === "string") {
-    const names = (await readdir(workflowDirectory, { withFileTypes: true }).catch(() => []))
+    const names = (
+      await readdir(workflowDirectory, { withFileTypes: true }).catch(() => [])
+    )
       .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
       .map((entry) => entry.name)
       .sort()
+    const workflows = await Promise.all(
+      names.map(async (name) => {
+        const fileName = resolve(workflowDirectory, name)
+        return {
+          fileName,
+          loaded: parseWorkflowScript(
+            await readFile(fileName, "utf8"),
+            fileName
+          )
+        }
+      })
+    )
     const available: string[] = []
-    for (const name of names) {
-      const fileName = resolve(workflowDirectory, name)
-      const loaded = parseWorkflowScript(await readFile(fileName, "utf8"), fileName)
+    for (const { fileName, loaded } of workflows) {
       available.push(loaded.meta.name)
-      if (loaded.meta.name === reference) return { loaded, fileName }
+      if (loaded.meta.name === reference) {
+        return { fileName, loaded }
+      }
     }
-    throw new Error(`workflow(${JSON.stringify(reference)}): no workflow with that name. Available: ${available.join(", ")}`)
+    throw new Error(
+      `workflow(${JSON.stringify(reference)}): no workflow with that name. Available: ${available.join(", ")}`
+    )
   }
   const fileName = isAbsolute(reference.scriptPath)
     ? reference.scriptPath
     : resolve(dirname(currentFileName), reference.scriptPath)
-  return { loaded: parseWorkflowScript(await readFile(fileName, "utf8"), fileName), fileName }
+  return {
+    fileName,
+    loaded: parseWorkflowScript(await readFile(fileName, "utf8"), fileName)
+  }
 }
 
-async function waitForCancellation<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) throw new WorkflowCanceledError()
-  return new Promise<T>((resolve, reject) => {
+function waitForCancellation<T>(
+  promise: Promise<T>,
+  signal: AbortSignal
+): Promise<T> {
+  if (signal.aborted) {
+    throw new WorkflowCanceledError()
+  }
+  return new Promise<T>((resolvePromise, reject) => {
     const onAbort = () => reject(new WorkflowCanceledError())
     signal.addEventListener("abort", onAbort, { once: true })
     promise.then(
       (value) => {
         signal.removeEventListener("abort", onAbort)
-        resolve(value)
+        resolvePromise(value)
       },
       (error: unknown) => {
         signal.removeEventListener("abort", onAbort)
         reject(error)
-      },
+      }
     )
   })
 }
 
-function extractUsageTokens(usage: AppServerJSONValue | null | undefined): number {
-  if (usage === null || usage === undefined || typeof usage !== "object") return 0
-  if (Array.isArray(usage)) return 0
+function extractUsageTokens(
+  usage: AppServerJSONValue | null | undefined
+): number {
+  if (usage === null || usage === undefined || typeof usage !== "object") {
+    return 0
+  }
+  if (Array.isArray(usage)) {
+    return 0
+  }
   const direct = usage.totalTokens
-  if (typeof direct === "number" && Number.isFinite(direct) && direct >= 0) return direct
-  const total = usage.total
+  if (typeof direct === "number" && Number.isFinite(direct) && direct >= 0) {
+    return direct
+  }
+  const { total } = usage
   if (total !== null && typeof total === "object" && !Array.isArray(total)) {
     const tokens = total.totalTokens
-    if (typeof tokens === "number" && Number.isFinite(tokens) && tokens >= 0) return tokens
+    if (typeof tokens === "number" && Number.isFinite(tokens) && tokens >= 0) {
+      return tokens
+    }
   }
   return 0
 }

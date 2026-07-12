@@ -1,47 +1,47 @@
 import { cpus } from "node:os"
 import type { AppServerAgentHandle } from "./app-server.ts"
 
-export interface WorkflowCaps {
-  maxConcurrentAgents: number
+export type WorkflowCaps = {
   maxAgentsPerRun: number
   maxBoundaryItems: number
+  maxConcurrentAgents: number
   maxWorkflowDepth: number
 }
 
-export interface WorkflowCapOptions {
-  maxConcurrentAgents?: number
+export type WorkflowCapOptions = {
   maxAgentsPerRun?: number
   maxBoundaryItems?: number
+  maxConcurrentAgents?: number
   maxWorkflowDepth?: number
 }
 
-export interface WorkflowUsage {
+export type WorkflowUsage = {
   agentCount: number
   liveAgentCount: number
+  modelUsage: Record<string, WorkflowModelUsage>
+  peakConcurrentAgents: number
   replayedAgentCount: number
   subagentTokens: number
-  peakConcurrentAgents: number
-  modelUsage: Record<string, WorkflowModelUsage>
 }
 
-export interface WorkflowModelUsage {
+export type WorkflowModelUsage = {
   liveAgentCount: number
   replayedAgentCount: number
   subagentTokens: number
 }
 
-export interface WorkflowBudgetState {
+export type WorkflowBudgetState = {
+  assertAvailable: () => void
+  recordTokens: (tokens: number, model?: string) => void
+  remaining: () => number
+  spent: () => number
   total: number | null
-  spent(): number
-  remaining(): number
-  assertAvailable(): void
-  recordTokens(tokens: number, model?: string): void
 }
 
-interface ScheduledTask {
-  run: () => Promise<unknown>
-  resolve: (value: unknown) => void
+type ScheduledTask = {
   reject: (error: unknown) => void
+  resolve: (value: unknown) => void
+  run: () => Promise<unknown>
 }
 
 export class WorkflowCanceledError extends Error {
@@ -60,56 +60,75 @@ export class WorkflowCapError extends Error {
 
 class AgentQueue {
   private readonly pending: ScheduledTask[] = []
+  private readonly limit: number
+  private readonly onPeak: (peak: number) => void
   private active = 0
   private peak = 0
   private canceled: WorkflowCanceledError | null = null
 
-  constructor(
-    private readonly limit: number,
-    private readonly onPeak: (peak: number) => void,
-  ) {}
+  constructor(limit: number, onPeak: (peak: number) => void) {
+    this.limit = limit
+    this.onPeak = onPeak
+  }
 
   get activeCount(): number {
     return this.active
   }
 
   schedule<T>(run: () => Promise<T>, signal: AbortSignal): Promise<T> {
-    if (this.canceled !== null || signal.aborted) return Promise.reject(this.canceled ?? new WorkflowCanceledError())
+    if (this.canceled !== null || signal.aborted) {
+      return Promise.reject(this.canceled ?? new WorkflowCanceledError())
+    }
     return new Promise<T>((resolve, reject) => {
-      this.pending.push({ run: async () => run(), resolve: (value) => resolve(value as T), reject })
+      this.pending.push({
+        reject,
+        resolve: (value) => resolve(value as T),
+        run: async () => run()
+      })
       this.drain()
     })
   }
 
   cancel(error: WorkflowCanceledError): void {
-    if (this.canceled !== null) return
+    if (this.canceled !== null) {
+      return
+    }
     this.canceled = error
-    while (this.pending.length > 0) this.pending.shift()?.reject(error)
+    while (this.pending.length > 0) {
+      this.pending.shift()?.reject(error)
+    }
   }
 
   private drain(): void {
-    while (this.active < this.limit && this.pending.length > 0 && this.canceled === null) {
-      const task = this.pending.shift()!
-      this.active++
+    while (
+      this.active < this.limit &&
+      this.pending.length > 0 &&
+      this.canceled === null
+    ) {
+      const task = this.pending.shift()
+      if (!task) {
+        return
+      }
+      this.active += 1
       this.peak = Math.max(this.peak, this.active)
       this.onPeak(this.peak)
-      void Promise.resolve()
+      Promise.resolve()
         .then(task.run)
         .then(task.resolve, task.reject)
         .finally(() => {
-          this.active--
+          this.active -= 1
           this.drain()
         })
     }
   }
 }
 
-export interface WorkflowRunStateOptions {
-  workflowRunId: string
-  caps: WorkflowCaps
+export type WorkflowRunStateOptions = {
   budgetTotal: number | null
-  spentSource: number | (() => number)
+  caps: WorkflowCaps
   signal?: AbortSignal
+  spentSource: number | (() => number)
+  workflowRunId: string
 }
 
 export class WorkflowRunState {
@@ -120,15 +139,14 @@ export class WorkflowRunState {
   readonly usage: WorkflowUsage = {
     agentCount: 0,
     liveAgentCount: 0,
-    replayedAgentCount: 0,
-    subagentTokens: 0,
-    peakConcurrentAgents: 0,
     modelUsage: {},
+    peakConcurrentAgents: 0,
+    replayedAgentCount: 0,
+    subagentTokens: 0
   }
   readonly budget: WorkflowBudgetState
   private readonly queue: AgentQueue
   private readonly activeHandles = new Set<AppServerAgentHandle>()
-  private canceled = false
   private worktreeCount = 0
   private callChain = "v2:root"
 
@@ -141,33 +159,53 @@ export class WorkflowRunState {
     })
     let recordedTokens = 0
     const readSource = (): number => {
-      const value = typeof options.spentSource === "function" ? options.spentSource() : options.spentSource
+      const value =
+        typeof options.spentSource === "function"
+          ? options.spentSource()
+          : options.spentSource
       if (!Number.isFinite(value) || value < 0) {
-        throw new TypeError("budget.spent() must return a finite non-negative number")
+        throw new TypeError(
+          "budget.spent() must return a finite non-negative number"
+        )
       }
       return value
     }
     this.budget = {
-      total: options.budgetTotal,
-      spent: () => readSource() + recordedTokens,
-      remaining: () => options.budgetTotal === null
-        ? Infinity
-        : Math.max(0, options.budgetTotal - readSource() - recordedTokens),
       assertAvailable: () => {
-        if (options.budgetTotal !== null && readSource() + recordedTokens >= options.budgetTotal) {
-          throw new WorkflowCapError(`agent() budget cap reached: spent=${readSource() + recordedTokens}, total=${options.budgetTotal}`)
+        if (
+          options.budgetTotal !== null &&
+          readSource() + recordedTokens >= options.budgetTotal
+        ) {
+          throw new WorkflowCapError(
+            `agent() budget cap reached: spent=${readSource() + recordedTokens}, total=${options.budgetTotal}`
+          )
         }
       },
       recordTokens: (tokens, model = "unknown") => {
-        if (!Number.isFinite(tokens) || tokens < 0) throw new TypeError("agent usage tokens must be finite and non-negative")
+        if (!Number.isFinite(tokens) || tokens < 0) {
+          throw new TypeError(
+            "agent usage tokens must be finite and non-negative"
+          )
+        }
         recordedTokens += tokens
         this.usage.subagentTokens += tokens
         this.modelBucket(model).subagentTokens += tokens
       },
+      remaining: () =>
+        options.budgetTotal === null
+          ? Number.POSITIVE_INFINITY
+          : Math.max(0, options.budgetTotal - readSource() - recordedTokens),
+      spent: () => readSource() + recordedTokens,
+      total: options.budgetTotal
     }
     if (options.signal) {
-      if (options.signal.aborted) this.cancel()
-      else options.signal.addEventListener("abort", () => this.cancel(), { once: true })
+      if (options.signal.aborted) {
+        this.cancel()
+      } else {
+        options.signal.addEventListener("abort", () => this.cancel(), {
+          once: true
+        })
+      }
     }
   }
 
@@ -175,9 +213,11 @@ export class WorkflowRunState {
     this.assertNotCanceled()
     this.budget.assertAvailable()
     if (this.usage.agentCount >= this.caps.maxAgentsPerRun) {
-      throw new WorkflowCapError(`agent() lifetime cap reached: maximum ${this.caps.maxAgentsPerRun} agents per workflow run`)
+      throw new WorkflowCapError(
+        `agent() lifetime cap reached: maximum ${this.caps.maxAgentsPerRun} agents per workflow run`
+      )
     }
-    this.usage.agentCount++
+    this.usage.agentCount += 1
     return `${this.workflowRunId}:agent-${this.usage.agentCount}`
   }
 
@@ -187,20 +227,26 @@ export class WorkflowRunState {
   }
 
   markLiveAgent(model = "unknown"): void {
-    this.usage.liveAgentCount++
-    this.modelBucket(model).liveAgentCount++
+    this.usage.liveAgentCount += 1
+    this.modelBucket(model).liveAgentCount += 1
   }
 
   markReplayedAgent(model = "unknown"): void {
-    this.usage.replayedAgentCount++
-    this.modelBucket(model).replayedAgentCount++
+    this.usage.replayedAgentCount += 1
+    this.modelBucket(model).replayedAgentCount += 1
   }
 
   private modelBucket(model: string): WorkflowModelUsage {
     const key = model.length > 0 ? model : "unknown"
     const existing = this.usage.modelUsage[key]
-    if (existing) return existing
-    const bucket = { liveAgentCount: 0, replayedAgentCount: 0, subagentTokens: 0 }
+    if (existing) {
+      return existing
+    }
+    const bucket = {
+      liveAgentCount: 0,
+      replayedAgentCount: 0,
+      subagentTokens: 0
+    }
     this.usage.modelUsage[key] = bucket
     return bucket
   }
@@ -211,7 +257,8 @@ export class WorkflowRunState {
   }
 
   nextWorktreeNumber(): number {
-    return ++this.worktreeCount
+    this.worktreeCount += 1
+    return this.worktreeCount
   }
 
   get currentCallChain(): string {
@@ -223,30 +270,51 @@ export class WorkflowRunState {
   }
 
   cancel(): void {
-    if (this.canceled) return
-    this.canceled = true
+    if (this.signal.aborted) {
+      return
+    }
     const error = new WorkflowCanceledError()
     this.queue.cancel(error)
     this.controller.abort(error)
-    for (const handle of this.activeHandles) void handle.interrupt().catch(() => undefined)
+    for (const handle of this.activeHandles) {
+      handle.interrupt().catch(() => undefined)
+    }
   }
 
   assertNotCanceled(): void {
-    if (this.canceled || this.signal.aborted) throw new WorkflowCanceledError()
+    if (this.signal.aborted) {
+      throw new WorkflowCanceledError()
+    }
   }
 }
 
-export function resolveWorkflowCaps(options: WorkflowCapOptions = {}): WorkflowCaps {
+export function resolveWorkflowCaps(
+  options: WorkflowCapOptions = {}
+): WorkflowCaps {
   const available = Math.max(1, cpus().length - 2)
   return {
-    maxConcurrentAgents: validateCap(options.maxConcurrentAgents ?? Math.min(16, available), "maxConcurrentAgents"),
-    maxAgentsPerRun: validateCap(options.maxAgentsPerRun ?? 1000, "maxAgentsPerRun"),
-    maxBoundaryItems: validateCap(options.maxBoundaryItems ?? 4096, "maxBoundaryItems"),
-    maxWorkflowDepth: validateCap(options.maxWorkflowDepth ?? 1, "maxWorkflowDepth"),
+    maxAgentsPerRun: validateCap(
+      options.maxAgentsPerRun ?? 1000,
+      "maxAgentsPerRun"
+    ),
+    maxBoundaryItems: validateCap(
+      options.maxBoundaryItems ?? 4096,
+      "maxBoundaryItems"
+    ),
+    maxConcurrentAgents: validateCap(
+      options.maxConcurrentAgents ?? Math.min(16, available),
+      "maxConcurrentAgents"
+    ),
+    maxWorkflowDepth: validateCap(
+      options.maxWorkflowDepth ?? 1,
+      "maxWorkflowDepth"
+    )
   }
 }
 
 function validateCap(value: number, name: string): number {
-  if (!Number.isSafeInteger(value) || value < 1) throw new TypeError(`${name} must be a positive safe integer`)
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new TypeError(`${name} must be a positive safe integer`)
+  }
   return value
 }
