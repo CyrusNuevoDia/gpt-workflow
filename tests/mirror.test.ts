@@ -8,7 +8,7 @@ import {
   mirrorPassed,
   syncMirror,
   transformWorkflow
-} from "../scripts/mirror.ts"
+} from "../scripts/mirror.js"
 
 async function withDirectories(
   run: (directories: {

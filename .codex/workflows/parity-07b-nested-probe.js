@@ -16,7 +16,7 @@ phase("Probe");
 try {
   const child = await workflow({
     scriptPath:
-      "/Users/knrz/Git/CyrusNuevoDia/gpt-workflow/.codex/workflows/parity-05-args.js"
+      "./parity-05-args.js"
   });
   log("inner workflow() succeeded — running at top level");
   return { childSuite: (child && child.suite) || null, nestedThrew: false, suite: 'parity-07b-nested-probe' }

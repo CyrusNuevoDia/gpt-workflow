@@ -15,8 +15,8 @@ import {
   VerificationArtifactWriter,
   type VerificationCondition,
   type VerificationReport
-} from "../src/verification.ts"
-import { checkMirror } from "./mirror.ts"
+} from "../src/verification.js"
+import { checkMirror } from "./mirror.js"
 
 const execFileAsync = promisify(execFile)
 const repository = resolve(process.cwd())

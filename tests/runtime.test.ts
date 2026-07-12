@@ -4,8 +4,9 @@ import {
   type JSONValue,
   parseWorkflowScript,
   runWorkflowScript,
+  type WorkflowEventNotification,
   type WorkflowExecutionOptions
-} from "../src/runtime.ts"
+} from "../src/runtime.js"
 
 const META = `export const meta = {
   name: 'offline-runtime',
@@ -68,6 +69,37 @@ test("supports top-level await and top-level return in strict JavaScript", async
   )
 
   expect(execution.result).toEqual({ strictThis: true, value: 42 })
+})
+
+test("streams attributed workflow phase and log events as they happen", async () => {
+  const notifications: WorkflowEventNotification[] = []
+  const execution = await runWorkflowScript(
+    script(`
+      phase('First')
+      log('working')
+      return true
+    `),
+    {
+      fileName: "/repo/workflow.js",
+      onWorkflowEvent: (event) => notifications.push(event)
+    }
+  )
+
+  expect(notifications).toEqual([
+    {
+      depth: 0,
+      event: { detail: "first detail", title: "First", type: "phase" },
+      fileName: "/repo/workflow.js"
+    },
+    {
+      depth: 0,
+      event: { message: "working", type: "log" },
+      fileName: "/repo/workflow.js"
+    }
+  ])
+  expect(execution.events).toEqual(
+    notifications.map((notification) => notification.event)
+  )
 })
 
 test("injects the documented API while removing ambient host bindings", async () => {

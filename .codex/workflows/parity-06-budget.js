@@ -3,8 +3,8 @@
 // tokens, non-negative, monotonic across an agent call), budget.remaining()
 // (Infinity with no target; bounded by total otherwise), and the
 // loop-until-budget guard pattern running zero iterations when no target is
-// set. The hard-ceiling behavior (agent() throws past total) is only
-// observable with a "+Nk" directive — see PARITY.md.
+// set. The hard-ceiling behavior (agent() throws past total) requires a live
+// budgeted run.
 export const meta = {
   description:
     "budget: total/spent()/remaining() contract, Infinity remaining with no target, loop-until-budget guard",

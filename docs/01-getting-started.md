@@ -67,48 +67,51 @@ Everything characteristic is already here:
 - A failed agent yields `null`, so `.filter(Boolean)` before consuming results.
 - The script's `return` value **is** the run's result.
 
-## Launching a run
+## Running a workflow
 
-Three invocation shapes, all through the `Workflow` tool:
+Put the workflow above in a string named `source`. Connect one App Server
+client, pass it to each run, and close it when the application is done:
 
 ```js
-Workflow({ script: "export const meta = {...}\n..." })       // inline source
-Workflow({ scriptPath: "/abs/path/to/my-workflow.js" })      // from a file
-Workflow({ name: "deep-research", args: { question: "..." }})// registered name
+import {
+  AppServerClient,
+  REQUIRED_APP_SERVER_MODELS,
+  runWorkflowScript
+} from "gpt-workflow"
+
+const client = await AppServerClient.connect({
+  requiredModels: REQUIRED_APP_SERVER_MODELS
+})
+
+try {
+  const execution = await runWorkflowScript(source, {
+    appServer: client,
+    args: { files: ["src/parser.ts", "src/emitter.ts", "src/cache.ts"] },
+    onAgentEvent: (event) => console.log(event)
+  })
+  console.log(execution.result)
+} finally {
+  await client.close()
+}
 ```
 
-Notes on each:
-
-- **Inline `script`** is the normal path for one-off workflows. The runtime
-  persists the source to a file under the session directory and returns that
-  path, so you never resend the source — edit the file and relaunch with
-  `scriptPath`.
-- **`scriptPath`** takes precedence over `script` and `name`. Use it for files
-  you keep in the repo (like this repo's parity suite).
-- **`name`** resolves from a registry (built-ins, plugins, `.claude/workflows/`).
-  Caveat *(observed)*: the registry does not see files written mid-session —
-  a fresh session registers them. Pinned by: `parity-07` (recorded check).
-
-Every run launches **in the background**. The tool returns immediately with:
-
-- a **task ID** (for `TaskOutput`/`TaskStop`),
-- a **run ID** (`wf_...`, for resume),
-- the persisted **script file path**,
-- the **transcript directory** (per-agent transcripts + the journal).
-
-Watch live progress with `/workflows` — you'll see the phase groups, agent
-labels, and `log()` lines from the script.
+`runWorkflowScript()` resolves when the run finishes. `onAgentEvent` receives
+attributable progress while agents are active. To load a workflow from disk,
+read the JavaScript source and pass it to the same function; `fileName` can
+preserve the source name in load errors.
 
 ## Reading the result
 
-When the run finishes, a task notification delivers:
+When the returned promise resolves, `WorkflowExecution` contains:
 
 - **`result`** — whatever the script returned, JSON-serialized.
 - **`failures`** — one line per failed slot, e.g.
   `parallel[2] failed: intentional thunk failure`. Failures that the script
   absorbed (null slots) do **not** fail the run. Pinned by: `parity-03`.
-- **`usage`** — agent counts (`done`/`error`/`skipped`/`empty_result`),
-  subagent tokens, tool uses, duration.
+- **`usage`** — agent counts and model token usage.
+- **`events`** and **`agentEvents`** — script and App Server lifecycle evidence.
+- **`workflowRunId`** and **`journalPath`** — identifiers for replay and
+  inspection.
 
 If the result looks empty or wrong, read `journal.jsonl` in the transcript
 directory **before** re-running — it records each agent's actual return value
@@ -118,9 +121,10 @@ directory **before** re-running — it records each agent's actual return value
 
 The edit loop the runtime is designed around:
 
-1. Launch once (inline or by path). Note the returned `scriptPath` and `runId`.
-2. Edit the script file.
-3. Relaunch with `Workflow({ scriptPath, resumeFromRunId: runId })`.
+1. Run the source and keep `execution.workflowRunId`.
+2. Edit the source.
+3. Run it again with `resumeFromRunId: execution.workflowRunId` and the same
+   transcript location.
 
 Resume replays the longest unchanged **prefix** of `agent()` calls from cache —
 same prompt and options ⇒ cached result, instantly and for free; the first
@@ -137,11 +141,15 @@ This is also why scripts ban wall clocks and randomness — see
 The `args` input surfaces in the script as a global, **verbatim**:
 
 ```js
-Workflow({ scriptPath: ".../triage.js", args: { repo: "web", files: ["a.ts", "b.ts"] } })
+const execution = await runWorkflowScript(source, {
+  appServer: client,
+  args: { repo: "web", files: ["a.ts", "b.ts"] }
+})
 ```
 
+Inside the workflow source, `args` is the same JSON-compatible value:
+
 ```js
-// inside the script
 const targets = args.files.map(f => args.repo + '/' + f)   // real array — .map works
 ```
 
@@ -157,15 +165,11 @@ Two sharp edges, both verified live (Pinned by: `parity-05`):
 const input = typeof args === 'string' ? JSON.parse(args) : (args || {})
 ```
 
-## Who may launch workflows
+## Controlling launch authority
 
-The reference runtime gates orchestration behind explicit user opt-in: the
-`ultracode` keyword or session toggle, the user asking for a workflow /
-multi-agent orchestration in their own words, a skill whose instructions call
-for it, or a named/saved workflow. A task merely *benefiting* from parallelism
-does not qualify. An independent implementation should decide its own policy,
-but the default posture — workflows can spawn dozens of agents, so the user
-opts into that scale — is worth keeping.
+The library does not decide who may start a workflow. Applications should gate
+multi-agent execution explicitly: workflows can spawn dozens of agents and
+spend model tokens, so the user should opt into that scale.
 
 ## Where to next
 

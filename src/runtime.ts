@@ -9,16 +9,16 @@ import type {
   AppServerJSONValue,
   AppServerNormalizedEvent,
   AppServerNormalizedEventListener
-} from "./app-server.ts"
-import { WorkflowJournal } from "./workflow-journal.ts"
+} from "./app-server.js"
+import { WorkflowJournal } from "./workflow-journal.js"
 import {
   resolveWorkflowCaps,
   WorkflowCanceledError,
   type WorkflowCapOptions,
   WorkflowRunState,
   type WorkflowUsage
-} from "./workflow-state.ts"
-import { createWorkflowWorktree, type WorkflowWorktree } from "./worktree.ts"
+} from "./workflow-state.js"
+import { createWorkflowWorktree, type WorkflowWorktree } from "./worktree.js"
 
 export type JSONPrimitive = string | number | boolean | null
 export type JSONValue = JSONPrimitive | JSONArray | JSONObject
@@ -56,6 +56,16 @@ export type WorkflowLogEvent = {
 
 export type WorkflowEvent = WorkflowPhaseEvent | WorkflowLogEvent
 
+export type WorkflowEventNotification = {
+  depth: number
+  event: WorkflowEvent
+  fileName: string
+}
+
+export type WorkflowEventListener = (
+  notification: WorkflowEventNotification
+) => void
+
 export type WorkflowFailure = {
   index: number
   kind: "parallel" | "pipeline"
@@ -91,6 +101,7 @@ export type WorkflowExecutionOptions = {
   fileName?: string
   onAgentEvent?: AppServerNormalizedEventListener
   onAgentStart?: (handle: AppServerAgentHandle) => void
+  onWorkflowEvent?: WorkflowEventListener
   resumeFromRunId?: string
   signal?: AbortSignal
   transcriptDirectory?: string
@@ -1152,14 +1163,22 @@ async function executeWorkflow(
     const configured = loaded.meta.phases?.find(
       (entry) => entry.title === title
     )
-    events.push({ detail: configured?.detail ?? null, title, type: "phase" })
+    const event = {
+      detail: configured?.detail ?? null,
+      title,
+      type: "phase" as const
+    }
+    events.push(event)
+    options.onWorkflowEvent?.({ depth, event, fileName })
   }, createError)
 
   const log = makeSafeHostFunction((message: unknown) => {
     if (typeof message !== "string") {
       throw new TypeError("log() message must be a string")
     }
-    events.push({ message, type: "log" })
+    const event = { message, type: "log" as const }
+    events.push(event)
+    options.onWorkflowEvent?.({ depth, event, fileName })
   }, createError)
 
   const assertCollection = (

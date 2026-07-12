@@ -17,6 +17,7 @@
     }
   },
   "javascript": {
+    "globals": ["Bun"],
     "formatter": {
       "semicolons": "asNeeded",
       "trailingCommas": "none"

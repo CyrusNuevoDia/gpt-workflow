@@ -1,5 +1,5 @@
 import { cpus } from "node:os"
-import type { AppServerAgentHandle } from "./app-server.ts"
+import type { AppServerAgentHandle } from "./app-server.js"
 
 export type WorkflowCaps = {
   maxAgentsPerRun: number

@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
-import Ajv, { type AnySchema } from "ajv"
+import { Ajv, type AnySchema } from "ajv"
 
 const SENSITIVE_EVENT_KEY =
   /(?:authorization|api[-_]?key|access[-_]?token|cookie|password|secret|environment)/i

@@ -3,7 +3,8 @@
 Read in order the first time; each doc stands alone for reference afterwards.
 
 1. **[Getting started](01-getting-started.md)** — the mental model, your first
-   workflow, launching it, reading results, iterating.
+   workflow, running it through the installed library, reading results,
+   iterating.
 2. **[Script format](02-script-format.md)** — anatomy of a workflow script: the
    `meta` block, the language sandbox, determinism rules, return values.
 3. **[API reference](03-api.md)** — every global available to a script:
@@ -21,9 +22,9 @@ Read in order the first time; each doc stands alone for reference afterwards.
 Conventions used throughout:
 
 - **Pinned by: `parity-NN`** marks a behavior asserted by a workflow in
-  [`.claude/workflows/`](../.claude/workflows/) and verified live against the
-  reference runtime (see [PARITY.md](../PARITY.md)).
-- *(observed)* marks details recorded from live runs that the spec text leaves
-  open — reproduce them or consciously diverge.
+  [`.claude/workflows/`](../.claude/workflows/) and covered by this runtime's
+  mirrored fixtures and tests.
+- *(observed)* marks details recorded from live runs that the script-language
+  contract leaves open.
 - "Orchestrator script" = your JavaScript. "Subagent" = the LLM agent an
   `agent()` call spawns. "Run" = one invocation of a workflow.

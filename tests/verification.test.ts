@@ -13,7 +13,7 @@ import {
   validateResumeProtocol,
   validateStreamingEvidence,
   validateSuiteResult
-} from "../src/verification.ts"
+} from "../src/verification.js"
 
 const WORKFLOWS = [
   "parity-01-core.js",

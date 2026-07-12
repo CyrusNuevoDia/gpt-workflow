@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { appendFile, mkdir, readFile } from "node:fs/promises"
 import { join } from "node:path"
-import type { JSONObject, JSONValue } from "./runtime.ts"
+import type { JSONObject, JSONValue } from "./runtime.js"
 
 export type WorkflowJournalEntry = {
   agentId: string
@@ -50,6 +50,7 @@ export class WorkflowJournal {
         throw error
       }
     }
+    await appendFile(path, "")
     return new WorkflowJournal(directory, parseReplayEntries(source))
   }
 

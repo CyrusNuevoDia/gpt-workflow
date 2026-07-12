@@ -4,8 +4,7 @@
 // (recorded — registries that snapshot at session start will not see files
 // written mid-session), the one-level nesting limit (via
 // parity-07b-nested-probe), and unknown-name errors being catchable.
-// Shared-pool semantics (concurrency cap, agent counter, budget) are
-// documented in PARITY.md.
+// Shared-pool semantics cover the concurrency cap, agent counter, and budget.
 export const meta = {
   description:
     "workflow(): child by scriptPath and by name, args passthrough, return values, one-level nesting limit, unknown-name throws",
@@ -32,9 +31,9 @@ function check(name, pass, detail) {
 }
 
 const CHILD_PATH =
-  "/Users/knrz/Git/CyrusNuevoDia/gpt-workflow/.codex/workflows/parity-05-args.js";
+  "./parity-05-args.js";
 const PROBE_PATH =
-  "/Users/knrz/Git/CyrusNuevoDia/gpt-workflow/.codex/workflows/parity-07b-nested-probe.js";
+  "./parity-07b-nested-probe.js";
 const CHILD_ARGS = { count: 2, list: ["a", "b"], topic: "tea kettles" };
 
 phase("ByScriptPath");

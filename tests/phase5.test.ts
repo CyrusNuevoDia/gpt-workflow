@@ -14,8 +14,8 @@ import { promisify } from "node:util"
 import type {
   AppServerAgentHandle,
   AppServerClient
-} from "../src/app-server.ts"
-import { type JSONValue, runWorkflowScript } from "../src/runtime.ts"
+} from "../src/app-server.js"
+import { type JSONValue, runWorkflowScript } from "../src/runtime.js"
 
 const execFileAsync = promisify(execFile)
 function script(body: string, name = "phase5-offline"): string {

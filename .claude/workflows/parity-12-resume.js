@@ -4,8 +4,8 @@
 // execution mints a fresh nonce, a journal replay returns the recorded one
 // byte-for-byte. So nonce equality across runs is in-band proof of replay:
 // no clock, no token counter, no journal access needed inside the script.
-// Cross-run assertions live in the RUNNER protocol (PARITY.md "Running the
-// resume protocol") — run this suite three times and diff the echoed nonces:
+// Cross-run assertions live in the runner protocol: run this suite three times
+// and diff the echoed nonces:
 //   R1 fresh,      args {salt:'s1'}  -> record nonces + runId
 //   R2 resume(R1), args {salt:'s1'}  -> all nonces identical, 0 subagent tokens
 //   R3 resume(R1), args {salt:'s2'}  -> nonce A identical (unchanged prefix
@@ -18,7 +18,7 @@
 // sequential — "prefix" is only well-defined against a deterministic order.
 export const meta = {
   description:
-    "resumeFromRunId: entropy nonces expose which agents ran live vs replayed from the journal; run 3x per the PARITY.md resume protocol",
+    "resumeFromRunId: entropy nonces expose which agents ran live vs replayed from the journal; run the 3-leg resume protocol",
   name: "parity-12-resume",
   phases: [
     { detail: "A fixed -> B salted -> C fixed, sequential", title: "Nonces" }
@@ -47,8 +47,8 @@ function noncePrompt(marker) {
 }
 
 phase("Nonces");
-// Tolerate the documented string-args arrival mode (PARITY.md finding 4 /
-// parity-05 with-string-args): the runner can't always control whether args
+// Tolerate the string-args arrival mode covered by parity-05: the runner can't
+// always control whether args
 // cross the tool-call boundary as an object or a JSON-encoded string, and the
 // parse is deterministic so prompt hashes stay stable across legs.
 let input = args;

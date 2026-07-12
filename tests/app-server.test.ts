@@ -11,8 +11,8 @@ import {
   AppServerTimeoutError,
   AppServerTurnError,
   REQUIRED_APP_SERVER_MODELS
-} from "../src/app-server.ts"
-import { runWorkflowScript } from "../src/runtime.ts"
+} from "../src/app-server.js"
+import { runWorkflowScript } from "../src/runtime.js"
 
 const MALFORMED_JSON_PATTERN = /malformed JSON/
 const NO_PENDING_REQUEST_PATTERN = /no pending request/

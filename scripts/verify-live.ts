@@ -15,17 +15,17 @@ import { promisify } from "node:util"
 import type {
   AppServerAgentHandle,
   AppServerNormalizedEvent
-} from "../src/app-server.ts"
+} from "../src/app-server.js"
 import {
   AppServerClient,
   REQUIRED_APP_SERVER_MODELS
-} from "../src/app-server.ts"
+} from "../src/app-server.js"
 import {
   type JSONValue,
   runWorkflowScript,
   type WorkflowExecution,
   type WorkflowExecutionOptions
-} from "../src/runtime.ts"
+} from "../src/runtime.js"
 import {
   appendVerificationEvent,
   buildInvocationMatrix,
@@ -52,8 +52,8 @@ import {
   validateSuiteResult,
   type WorkflowInvocationPlan,
   type WorkflowInvocationRecord
-} from "../src/verification.ts"
-import { checkMirror } from "./mirror.ts"
+} from "../src/verification.js"
+import { checkMirror } from "./mirror.js"
 
 const execFileAsync = promisify(execFile)
 const repository = resolve(process.cwd())

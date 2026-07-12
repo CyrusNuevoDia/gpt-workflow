@@ -35,3 +35,4 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Future verification reports and append-only events; keep runtime data secret-safe
 /.verification-artifacts/
+/.gpt-workflow/

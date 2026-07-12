@@ -97,9 +97,8 @@ Relaunching with `Workflow({ scriptPath, resumeFromRunId })` replays completed
   subagent tokens**, returning a byte-identical result.
 - Resume **reuses the prior run's ID and transcript dir** rather than minting
   new ones, and a completed run can be resumed multiple times.
-- Resume is **same-session only**, and a still-running prior run must be
-  stopped (`TaskStop`) first. (Runner-level limits — a script can't observe
-  them; see PARITY.md "Not scriptable".)
+- A still-running prior run must be interrupted before resuming it. This is a
+  runner-level limit that a workflow script cannot observe directly.
 - This is why the determinism guards exist: any wall-clock or entropy in a
   prompt would change the hash on re-execution and silently void the cache.
 
