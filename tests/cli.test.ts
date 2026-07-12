@@ -18,7 +18,7 @@ function execution(): WorkflowExecution {
     agentEvents: [],
     events: [],
     failures: [],
-    journalPath: "/repo/.gpt-workflow/runs/workflow-test/journal.jsonl",
+    journalPath: "/repo/.codex/workflows/runs/workflow-test/journal.jsonl",
     meta: { description: "CLI test", name: "cli-test" },
     result: { answer: 42 },
     usage: {
@@ -110,16 +110,70 @@ test("run streams ordered self-contained NDJSON and closes the App Server", asyn
     )
   ).toBe(true)
   expect(records.at(-1)).toMatchObject({
-    journalPath: "/repo/.gpt-workflow/runs/workflow-test/journal.jsonl",
+    journalPath: "/repo/.codex/workflows/runs/workflow-test/journal.jsonl",
     result: { answer: 42 },
     type: "run.completed"
   })
   expect(receivedOptions).toMatchObject({
     cwd: "/repo",
     fileName: "/repo/workflow.js",
-    transcriptDirectory: "/repo/.gpt-workflow/runs/workflow-test",
+    runDirectory: "/repo/.codex/workflows/runs/workflow-test",
     workflowRunId: "workflow-test"
   })
+})
+
+test("resume reuses the requested run ID and run directory", async () => {
+  const output: string[] = []
+  let receivedOptions: WorkflowExecutionOptions | undefined
+
+  const exitCode = await runCLI(
+    ["run", "--resume", "workflow-existing", "workflow.js"],
+    {
+      connect: () =>
+        Promise.resolve({
+          close: () => Promise.resolve(),
+          startAgent: () => Promise.resolve(undefined as never)
+        }),
+      cwd: () => "/repo",
+      makeRunId: () => {
+        throw new Error("resume must not mint a run ID")
+      },
+      readSource: () => Promise.resolve("workflow source"),
+      runWorkflow: (_source, options) => {
+        receivedOptions = options
+        return Promise.resolve({
+          ...execution(),
+          journalPath:
+            "/repo/.codex/workflows/runs/workflow-existing/journal.jsonl",
+          workflowRunId: "workflow-existing"
+        })
+      },
+      writeError: () => undefined,
+      writeOutput: (text) => output.push(text)
+    }
+  )
+
+  expect(exitCode).toBe(0)
+  expect(receivedOptions).toMatchObject({
+    resumeFromRunId: "workflow-existing",
+    runDirectory: "/repo/.codex/workflows/runs/workflow-existing"
+  })
+  expect(receivedOptions?.workflowRunId).toBeUndefined()
+  expect(output.map((line) => JSON.parse(line))).toEqual([
+    expect.objectContaining({
+      resumeFromRunId: "workflow-existing",
+      runDirectory: "/repo/.codex/workflows/runs/workflow-existing",
+      runId: "workflow-existing",
+      type: "run.started"
+    }),
+    expect.objectContaining({
+      journalPath:
+        "/repo/.codex/workflows/runs/workflow-existing/journal.jsonl",
+      runDirectory: "/repo/.codex/workflows/runs/workflow-existing",
+      runId: "workflow-existing",
+      type: "run.completed"
+    })
+  ])
 })
 
 test("run emits a terminal NDJSON failure and human stderr", async () => {
@@ -169,7 +223,9 @@ test("help and invalid invocations stay outside the run stream", async () => {
     writeOutput: (text) => helpOutput.push(text)
   })
   expect(helpCode).toBe(0)
-  expect(helpOutput.join("")).toContain("gpt-workflow run <script.js>")
+  expect(helpOutput.join("")).toContain(
+    "gpt-workflow run [--resume <runId>] <script.js>"
+  )
 
   const errors: string[] = []
   const invalidCode = await runCLI(["run"], {
@@ -183,6 +239,6 @@ test("help and invalid invocations stay outside the run stream", async () => {
   })
   expect(invalidCode).toBe(1)
   expect(errors.join("")).toContain(
-    "expected exactly: gpt-workflow run <script.js>"
+    "expected exactly: gpt-workflow run [--resume <runId>] <script.js>"
   )
 })

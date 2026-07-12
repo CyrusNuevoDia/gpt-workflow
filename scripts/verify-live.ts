@@ -171,7 +171,7 @@ async function runInvocation(
             event as unknown as Record<string, unknown>
           )
         ),
-      transcriptDirectory: join(
+      runDirectory: join(
         writer.directory,
         "workflows",
         isResume ? resumeRunId : `${writer.verifierRunId}-${plan.id}`

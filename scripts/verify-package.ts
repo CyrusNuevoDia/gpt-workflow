@@ -23,7 +23,7 @@ const buildInfoPath = join(repository, "tsconfig.tsbuildinfo")
 const artifactsPath = join(repository, ".verification-artifacts")
 
 const publicValueExports =
-  "AppServerClient AppServerError AppServerModelError AppServerProcessError AppServerProtocolError AppServerRemoteError AppServerResultError AppServerTimeoutError AppServerTurnError JSONBoundaryError REQUIRED_APP_SERVER_MODELS WorkflowLoadError parseWorkflowScript runWorkflowScript".split(
+  "AppServerClient AppServerError AppServerModelError AppServerProcessError AppServerProtocolError AppServerRemoteError AppServerResultError AppServerTimeoutError AppServerTurnError JSONBoundaryError REQUIRED_APP_SERVER_MODELS WorkflowLoadError parseWorkflowJournalEntry parseWorkflowScript runWorkflowScript".split(
     " "
   )
 
@@ -38,6 +38,10 @@ const source = 'export const meta = { name: "package-smoke", description: "insta
 const parsed = api.parseWorkflowScript(source, "package-smoke.js")
 if (parsed.meta.name !== "package-smoke") {
   throw new Error("workflow parse returned unexpected metadata: " + JSON.stringify(parsed.meta))
+}
+const journalEntry = api.parseWorkflowJournalEntry('{"type":"result","key":"v2:package","agentId":"package-agent","result":{"ok":true}}')
+if (journalEntry.type !== "result" || journalEntry.result.ok !== true) {
+  throw new Error("journal parser returned an unexpected record: " + JSON.stringify(journalEntry))
 }
 const execution = await api.runWorkflowScript(source, {
   agent: async (prompt, options) => {
@@ -57,8 +61,10 @@ const typeSmokeSource = `
 import {
   AppServerClient,
   type AppServerClientOptions,
+  parseWorkflowJournalEntry,
   type WorkflowExecution,
   type WorkflowExecutionOptions,
+  type WorkflowJournalEntry,
   runWorkflowScript
 } from "gpt-workflow"
 
@@ -67,12 +73,16 @@ const executionOptions: WorkflowExecutionOptions = {
   agent: async () => "typed-offline-result"
 }
 const clientPromise: Promise<AppServerClient> = AppServerClient.connect(clientOptions)
+const journalEntry: WorkflowJournalEntry = parseWorkflowJournalEntry(
+  '{"type":"started","key":"v2:type-smoke","agentId":"type-smoke-agent"}'
+)
 const executionPromise: Promise<WorkflowExecution> = runWorkflowScript(
   'export const meta = { name: "type-smoke", description: "type smoke" }\\nreturn null',
   executionOptions
 )
 void clientPromise
 void executionPromise
+void journalEntry
 `
 
 const cliSmokeSource = `export const meta = {
@@ -289,6 +299,7 @@ async function verify(): Promise<{ paths: string[]; tarball: string }> {
       [
         "install",
         tarballPath,
+        "@types/node@^24.0.0",
         "--ignore-scripts",
         "--no-audit",
         "--no-fund",
@@ -376,10 +387,40 @@ async function verify(): Promise<{ paths: string[]; tarball: string }> {
     if (
       JSON.stringify(cliCompleted?.result) !== '{"installed":true}' ||
       typeof cliCompleted?.journalPath !== "string" ||
+      typeof cliCompleted?.runDirectory !== "string" ||
+      cliCompleted.journalPath !==
+        join(cliCompleted.runDirectory, "journal.jsonl") ||
       !(await exists(cliCompleted.journalPath))
     ) {
       throw new Error(
         `installed CLI completion is missing its result or durable journal: ${JSON.stringify(cliCompleted)}`
+      )
+    }
+    const cliRunId = cliCompleted.runId
+    if (typeof cliRunId !== "string") {
+      throw new Error("installed CLI completion is missing its run ID")
+    }
+    const resumedOutput = await run(
+      "installed CLI resume smoke",
+      join(consumer, "node_modules", ".bin", "gpt-workflow"),
+      ["run", "--resume", cliRunId, cliWorkflowPath],
+      consumer,
+      env
+    )
+    const resumedRecords = resumedOutput
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+    const resumedStarted = resumedRecords.at(0)
+    const resumedCompleted = resumedRecords.at(-1)
+    if (
+      resumedStarted?.resumeFromRunId !== cliRunId ||
+      resumedStarted.runDirectory !== cliCompleted.runDirectory ||
+      resumedCompleted?.runId !== cliRunId ||
+      resumedCompleted.journalPath !== cliCompleted.journalPath
+    ) {
+      throw new Error(
+        `installed CLI resume did not reuse the run: ${JSON.stringify(resumedRecords)}`
       )
     }
     result = { paths, tarball: packed.filename }

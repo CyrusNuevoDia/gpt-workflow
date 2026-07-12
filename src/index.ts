@@ -66,6 +66,12 @@ export {
   WorkflowLoadError
 } from "./runtime.js"
 export type {
+  WorkflowJournalEntry,
+  WorkflowJournalResultEntry,
+  WorkflowJournalStartedEntry
+} from "./workflow-journal.js"
+export { parseWorkflowJournalEntry } from "./workflow-journal.js"
+export type {
   WorkflowCapOptions,
   WorkflowModelUsage,
   WorkflowUsage

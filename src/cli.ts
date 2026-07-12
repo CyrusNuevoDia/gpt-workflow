@@ -10,7 +10,7 @@ import {
   type WorkflowExecutionOptions
 } from "./runtime.js"
 
-const USAGE = `Usage: gpt-workflow run <script.js>
+const USAGE = `Usage: gpt-workflow run [--resume <runId>] <script.js>
 
 Run a workflow through Codex App Server. During a run, stdout is NDJSON and
 human-readable diagnostics are written to stderr.
@@ -55,7 +55,10 @@ export async function runCLI(
     parsed = parseArgs({
       allowPositionals: true,
       args,
-      options: { help: { short: "h", type: "boolean" } },
+      options: {
+        help: { short: "h", type: "boolean" },
+        resume: { type: "string" }
+      },
       strict: true
     })
   } catch (error) {
@@ -71,16 +74,28 @@ export async function runCLI(
   const [command, scriptArgument, ...extra] = parsed.positionals
   if (command !== "run" || !scriptArgument || extra.length > 0) {
     dependencies.writeError(
-      `gpt-workflow: expected exactly: gpt-workflow run <script.js>\n${USAGE}`
+      `gpt-workflow: expected exactly: gpt-workflow run [--resume <runId>] <script.js>\n${USAGE}`
     )
     return 1
   }
 
-  const runId = dependencies.makeRunId()
+  const resumeValue = parsed.values.resume
+  if (
+    resumeValue !== undefined &&
+    (typeof resumeValue !== "string" || resumeValue.trim().length === 0)
+  ) {
+    dependencies.writeError(
+      `gpt-workflow: --resume must be a non-empty run ID\n${USAGE}`
+    )
+    return 1
+  }
+  const resumeFromRunId = resumeValue
+  const runId = resumeFromRunId ?? dependencies.makeRunId()
   const scriptPath = resolve(dependencies.cwd(), scriptArgument)
-  const transcriptDirectory = join(
+  const runDirectory = join(
     dependencies.cwd(),
-    ".gpt-workflow",
+    ".codex",
+    "workflows",
     "runs",
     runId
   )
@@ -91,16 +106,20 @@ export async function runCLI(
     dependencies.writeOutput(
       `${JSON.stringify({
         ...record,
+        runDirectory,
         runId,
         schemaVersion: 1,
         scriptPath,
-        sequence: recordSequence,
-        transcriptDirectory
+        sequence: recordSequence
       })}\n`
     )
   }
 
-  emit({ scriptPath, transcriptDirectory, type: "run.started" })
+  emit({
+    ...(resumeFromRunId === undefined ? {} : { resumeFromRunId }),
+    scriptPath,
+    type: "run.started"
+  })
 
   let clientPromise: Promise<CLIClient> | undefined
   const appServer = {
@@ -127,8 +146,10 @@ export async function runCLI(
       fileName: scriptPath,
       onAgentEvent: (event) => emit({ event, type: "agent.event" }),
       onWorkflowEvent: (event) => emit({ event, type: "workflow.event" }),
-      transcriptDirectory,
-      workflowRunId: runId
+      runDirectory,
+      ...(resumeFromRunId === undefined
+        ? { workflowRunId: runId }
+        : { resumeFromRunId })
     })
     await closeClient()
     emit({

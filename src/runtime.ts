@@ -104,7 +104,7 @@ export type WorkflowExecutionOptions = {
   onWorkflowEvent?: WorkflowEventListener
   resumeFromRunId?: string
   signal?: AbortSignal
-  transcriptDirectory?: string
+  runDirectory?: string
   workflow?: WorkflowChild
   workflowDirectory?: string
   workflowRunId?: string
@@ -858,20 +858,13 @@ export async function runWorkflowScript(
     spentSource: options.budget?.spent ?? 0,
     workflowRunId
   })
-  const transcriptDirectory =
-    options.transcriptDirectory ??
+  const runDirectory =
+    options.runDirectory ??
     (options.appServer !== undefined || options.resumeFromRunId !== undefined
-      ? resolve(
-          process.cwd(),
-          ".verification-artifacts",
-          "workflows",
-          workflowRunId
-        )
+      ? resolve(process.cwd(), ".codex", "workflows", "runs", workflowRunId)
       : null)
   const journal =
-    transcriptDirectory === null
-      ? null
-      : await WorkflowJournal.open(transcriptDirectory)
+    runDirectory === null ? null : await WorkflowJournal.open(runDirectory)
   const agentEvents: AppServerNormalizedEvent[] = []
   const context: WorkflowRunContext = {
     agentEvents,

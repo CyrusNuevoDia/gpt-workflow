@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test"
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import {
   type AppServerAgentHandle,
   AppServerClient,
@@ -717,48 +720,56 @@ test("normalizes early lifecycle and intermediate events with complete run attri
 })
 
 test("runWorkflowScript uses the App Server client when no offline agent stub is supplied", async () => {
+  const runDirectory = await mkdtemp(
+    join(tmpdir(), "gpt-workflow-app-server-runtime-")
+  )
   const { client } = await connectFake(agentHandler("runtime-wired"), {
     requiredModels: ["gpt-5.6-luna"]
   })
   let startedHandle: AppServerAgentHandle | undefined
-  const execution = await runWorkflowScript(
-    "export const meta = { name: 'live', description: 'live' }\nreturn await agent('say runtime-wired', { model: 'gpt-5.6-luna' })",
-    {
-      appServer: client,
-      eventTimestamp: (() => {
-        let timestamp = 1
-        return () => {
-          const current = timestamp
-          timestamp += 1
-          return current
-        }
-      })(),
-      onAgentStart: (handle) => {
-        startedHandle = handle
-      },
-      workflowRunId: "workflow-runtime"
-    }
-  )
-  expect(execution.result).toBe("runtime-wired")
-  expect(execution.workflowRunId).toBe("workflow-runtime")
-  expect(execution.agentEvents.length).toBeGreaterThan(0)
-  expect(
-    execution.agentEvents.every(
-      (event) =>
-        event.workflowRunId === "workflow-runtime" &&
-        event.agentId === "workflow-runtime:agent-1"
+  try {
+    const execution = await runWorkflowScript(
+      "export const meta = { name: 'live', description: 'live' }\nreturn await agent('say runtime-wired', { model: 'gpt-5.6-luna' })",
+      {
+        appServer: client,
+        eventTimestamp: (() => {
+          let timestamp = 1
+          return () => {
+            const current = timestamp
+            timestamp += 1
+            return current
+          }
+        })(),
+        onAgentStart: (handle) => {
+          startedHandle = handle
+        },
+        runDirectory,
+        workflowRunId: "workflow-runtime"
+      }
     )
-  ).toBe(true)
-  expect(startedHandle).toMatchObject({
-    agentId: "workflow-runtime:agent-1",
-    workflowRunId: "workflow-runtime"
-  })
-  expect(client.lastAgentCallEvidence).toMatchObject({
-    requestedModel: "gpt-5.6-luna",
-    threadId: "thread-1",
-    turnId: "turn-1"
-  })
-  await client.close()
+    expect(execution.result).toBe("runtime-wired")
+    expect(execution.workflowRunId).toBe("workflow-runtime")
+    expect(execution.agentEvents.length).toBeGreaterThan(0)
+    expect(
+      execution.agentEvents.every(
+        (event) =>
+          event.workflowRunId === "workflow-runtime" &&
+          event.agentId === "workflow-runtime:agent-1"
+      )
+    ).toBe(true)
+    expect(startedHandle).toMatchObject({
+      agentId: "workflow-runtime:agent-1",
+      workflowRunId: "workflow-runtime"
+    })
+    expect(client.lastAgentCallEvidence).toMatchObject({
+      requestedModel: "gpt-5.6-luna",
+      threadId: "thread-1",
+      turnId: "turn-1"
+    })
+  } finally {
+    await client.close()
+    await rm(runDirectory, { force: true, recursive: true })
+  }
 })
 
 test("throwing progress observers do not fail the App Server transport or active turn", async () => {

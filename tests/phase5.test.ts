@@ -131,6 +131,7 @@ test("parent and child share agent IDs and the scheduler state", async () => {
       {
         appServer,
         caps: { maxConcurrentAgents: 1 },
+        runDirectory: join(directory, "run"),
         workflowDirectory: directory,
         workflowRunId: "phase5-shared"
       }
@@ -280,7 +281,12 @@ test("worktree isolation propagates exact cwd and removes only clean worktrees",
       script(`
       return await agent('worktree', { model: 'gpt-5.6-luna', isolation: 'worktree' })
     `),
-      { appServer, cwd: repository, workflowRunId: runId }
+      {
+        appServer,
+        cwd: repository,
+        runDirectory: join(repository, "run", runId),
+        workflowRunId: runId
+      }
     )
     expect(execution.result).toBe("worktree-ok")
     expect(received[0]?.cwd).toContain(
@@ -312,6 +318,7 @@ test("worktree isolation propagates exact cwd and removes only clean worktrees",
       {
         appServer: dirtyAppServer,
         cwd: repository,
+        runDirectory: join(repository, "run", dirtyRunId),
         workflowRunId: dirtyRunId
       }
     )
@@ -348,20 +355,20 @@ test("journal replay is byte-identical, repeatable, and invalidates the later pr
     const first = await runWorkflowScript(source, {
       agent: liveAgent,
       args: { salt: "s1" },
-      transcriptDirectory: directory,
+      runDirectory: directory,
       workflowRunId: "phase5-resume"
     })
     const replay = await runWorkflowScript(source, {
       agent: liveAgent,
       args: { salt: "s1" },
       resumeFromRunId: "phase5-resume",
-      transcriptDirectory: directory
+      runDirectory: directory
     })
     const changed = await runWorkflowScript(source, {
       agent: liveAgent,
       args: { salt: "s2" },
       resumeFromRunId: "phase5-resume",
-      transcriptDirectory: directory
+      runDirectory: directory
     })
     expect(JSON.stringify(replay.result)).toBe(JSON.stringify(first.result))
     expect(replay.usage).toMatchObject({

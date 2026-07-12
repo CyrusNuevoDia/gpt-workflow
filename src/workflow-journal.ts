@@ -3,37 +3,36 @@ import { appendFile, mkdir, readFile } from "node:fs/promises"
 import { join } from "node:path"
 import type { JSONObject, JSONValue } from "./runtime.js"
 
-export type WorkflowJournalEntry = {
+type ReplayEntry = {
   agentId: string
   key: string
   result: JSONValue
 }
 
-type JournalStarted = {
+export type WorkflowJournalStartedEntry = {
   agentId: string
   key: string
   type: "started"
 }
 
-type JournalResult = {
+export type WorkflowJournalResultEntry = {
   agentId: string
   key: string
   result: JSONValue
   type: "result"
 }
 
-type JournalLine = JournalStarted | JournalResult
+export type WorkflowJournalEntry =
+  | WorkflowJournalStartedEntry
+  | WorkflowJournalResultEntry
 
 export class WorkflowJournal {
   readonly directory: string
   readonly path: string
-  private readonly replayEntries: WorkflowJournalEntry[]
+  private readonly replayEntries: ReplayEntry[]
   private writeTail: Promise<void> = Promise.resolve()
 
-  private constructor(
-    directory: string,
-    replayEntries: WorkflowJournalEntry[]
-  ) {
+  private constructor(directory: string, replayEntries: ReplayEntry[]) {
     this.directory = directory
     this.path = join(directory, "journal.jsonl")
     this.replayEntries = replayEntries
@@ -67,20 +66,22 @@ export class WorkflowJournal {
     return `v2:${createHash("sha256").update(input).digest("hex")}`
   }
 
-  replay(index: number, key: string): WorkflowJournalEntry | null {
+  replay(index: number, key: string): ReplayEntry | null {
     const entry = this.replayEntries[index]
     return entry?.key === key ? entry : null
   }
 
-  appendStarted(entry: Omit<JournalStarted, "type">): Promise<void> {
+  appendStarted(
+    entry: Omit<WorkflowJournalStartedEntry, "type">
+  ): Promise<void> {
     return this.append({ type: "started", ...entry })
   }
 
-  appendResult(entry: Omit<JournalResult, "type">): Promise<void> {
+  appendResult(entry: Omit<WorkflowJournalResultEntry, "type">): Promise<void> {
     return this.append({ type: "result", ...entry })
   }
 
-  private append(line: JournalLine): Promise<void> {
+  private append(line: WorkflowJournalEntry): Promise<void> {
     this.writeTail = this.writeTail.then(() =>
       appendFile(this.path, `${JSON.stringify(line)}\n`)
     )
@@ -88,9 +89,31 @@ export class WorkflowJournal {
   }
 }
 
-function parseReplayEntries(source: string): WorkflowJournalEntry[] {
-  const starts = new Map<string, JournalStarted[]>()
-  const results = new Map<string, JournalResult[]>()
+export function parseWorkflowJournalEntry(
+  source: string
+): WorkflowJournalEntry {
+  if (source.trim().length === 0) {
+    throw new SyntaxError("workflow journal entry must not be blank")
+  }
+  let value: unknown
+  try {
+    value = JSON.parse(source)
+  } catch (error) {
+    throw new SyntaxError("workflow journal entry must be valid JSON", {
+      cause: error
+    })
+  }
+  if (!isJournalEntry(value)) {
+    throw new SyntaxError(
+      "workflow journal entry must be a valid started or result record"
+    )
+  }
+  return value
+}
+
+function parseReplayEntries(source: string): ReplayEntry[] {
+  const starts = new Map<string, WorkflowJournalStartedEntry[]>()
+  const results = new Map<string, WorkflowJournalResultEntry[]>()
   const lines = parseJournalLines(source)
   if (!lines) {
     return []
@@ -107,7 +130,7 @@ function parseReplayEntries(source: string): WorkflowJournalEntry[] {
     }
   }
 
-  const replay: WorkflowJournalEntry[] = []
+  const replay: ReplayEntry[] = []
   for (const entries of starts.values()) {
     for (const started of entries) {
       const matching =
@@ -131,27 +154,22 @@ function parseReplayEntries(source: string): WorkflowJournalEntry[] {
   return replay
 }
 
-function parseJournalLines(source: string): JournalLine[] | null {
-  const lines: JournalLine[] = []
+function parseJournalLines(source: string): WorkflowJournalEntry[] | null {
+  const lines: WorkflowJournalEntry[] = []
   for (const line of source.split("\n")) {
     if (line.trim().length === 0) {
       continue
     }
-    let value: unknown
     try {
-      value = JSON.parse(line)
+      lines.push(parseWorkflowJournalEntry(line))
     } catch {
       return null
     }
-    if (!isJournalLine(value)) {
-      return null
-    }
-    lines.push(value)
   }
   return lines
 }
 
-function isJournalLine(value: unknown): value is JournalLine {
+function isJournalEntry(value: unknown): value is WorkflowJournalEntry {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return false
   }
