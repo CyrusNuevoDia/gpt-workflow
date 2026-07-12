@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "check": "bunx tsc --noEmit && bun test tests/mirror.test.ts && bun run mirror:check",
+    "check": "bunx tsc --noEmit && bun test && bun run mirror:check",
     "mirror:sync": "bun scripts/mirror.ts sync",
     "mirror:check": "bun scripts/mirror.ts check",
     "verify:offline": "bun run check",

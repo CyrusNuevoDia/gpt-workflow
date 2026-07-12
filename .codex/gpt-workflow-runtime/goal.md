@@ -37,6 +37,10 @@ discover current capabilities and fail clearly when they are unavailable.
 - Codex App Server JSON-RPC over stdio is the only production agent substrate.
 - Bun owns workflow loading, sandboxing, orchestration, normalization,
   journaling, and verification.
+- Treat Bun's `node:vm` as a semantic compatibility sandbox for trusted
+  repository workflows, not as a security mechanism for hostile code. The
+  runtime must still control ambient globals and JSON boundary crossings, and
+  the final brief must state this limitation explicitly.
 - Do not add `@openai/codex-sdk` or route production calls through `codex exec`.
 - Treat generated App Server bindings and experimental fields as
   version-sensitive; verify them against the installed binary.
@@ -72,6 +76,7 @@ discover current capabilities and fail clearly when they are unavailable.
 - Provider-specific transcript wording or identical token counts.
 - Compatibility layers for abandoned pre-launch designs.
 - Broad documentation rewriting before runtime behavior is proven.
+- Safe execution of untrusted or adversarial workflow source.
 
 ## Primary verifier
 

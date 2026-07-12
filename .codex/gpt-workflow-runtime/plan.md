@@ -52,34 +52,56 @@ Evidence
 
 ## Phase 2: Prove the deterministic workflow VM offline
 
-Status: in progress
+Status: complete
 
 Implementation
 
-- [ ] Parse literal `meta` without executing the workflow body.
-- [ ] Execute plain JavaScript with top-level await/return and the documented
+- [x] Parse literal `meta` without executing the workflow body.
+- [x] Execute plain JavaScript with top-level await/return and the documented
   injected globals.
-- [ ] Implement deterministic guards and the JSON-compatible sandbox boundary.
-- [ ] Implement `parallel`, `pipeline`, `phase`, `log`, `args`, and offline
+- [x] Implement deterministic guards and the JSON-compatible sandbox boundary.
+- [x] Implement `parallel`, `pipeline`, `phase`, `log`, `args`, and offline
   budget semantics.
-- [ ] Preserve visible absorbed failures while failing uncaught workflow errors.
+- [x] Preserve visible absorbed failures while failing uncaught workflow errors.
 
 Verification
 
-- [ ] Run focused tests for every R5 condition.
-- [ ] Run focused tests for every R6 condition and report test counts.
-- [ ] Run malformed-meta, final-only-event, false-suite, schema-failure, and
-  4097-item negative controls that do not mutate the real fixtures.
+- [x] Run focused tests for every R5 condition.
+- [x] Run focused tests for every R6 condition and report test counts.
+- [x] Run the malformed-meta, false-suite, and 4097-item negative controls
+  available offline without mutating the real fixtures. Final-only-event and
+  schema-failure controls require the Phase 3/4 live result and event harness
+  and remain assigned to Phase 6's complete R14 sweep.
 
 Exit criteria
 
-- [ ] `bun run verify:offline` passes all VM and orchestration checks available
+- [x] `bun run verify:offline` passes all VM and orchestration checks available
   before live agent integration.
-- [ ] No workflow code can access Node/Bun ambient globals.
+- [x] No trusted repository workflow can access Node/Bun ambient globals
+  through the documented execution path. Bun `node:vm` is not a hostile-code
+  security boundary.
+
+Evidence
+
+- `bunx tsc --noEmit`, `bun run check`, `bun run verify:offline`, and
+  `git diff --check`: exit 0.
+- Full suite: 24 tests passed, 0 failed, 69 assertions (21 runtime tests and 3
+  mirror tests).
+- Corpus/runtime probe: all 13 mirrored workflows parsed; the zero-agent
+  `parity-10-runtime-guards` suite returned `passed: true` with no absorbed
+  failures.
+- Adversarial controls cover computed, malformed, expression-continued,
+  missing, and non-first `meta`; false suite results; non-JSON crossings;
+  invalid host-call shapes; and 4,097-item `parallel`/`pipeline` inputs.
+- Luna/xhigh implementation session:
+  `019f5585-9906-7813-b0e5-5cfa47db672d`.
+- Sol/high review session: `019f5594-eebf-7240-be31-0c281ab85ce2`. The review
+  fixed expression-continuation loading, host-realm function/Promise exposure,
+  mutable determinism guards, and missing host-call shape checks.
 
 ## Phase 3: Integrate Codex App Server as the agent substrate
 
-Status: pending
+Status: in progress
 
 Implementation
 
@@ -199,6 +221,6 @@ Exit criteria
 
 ## Next action
 
-Implement the smallest offline VM slice for R5/R6: literal `meta` parsing,
-top-level async script execution, deterministic guards, and tests that prove the
-sandbox boundary before adding orchestration behavior.
+Implement the stdio App Server client and authoritative live `agent()` result
+path for R3, R4, and R8, starting with initialization, model discovery, and one
+text/structured probe before adding steering and interruption.
