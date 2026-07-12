@@ -570,7 +570,7 @@ async function finalizeFromProof(proofPath: string): Promise<{ exitCode: number;
   await appendVerificationEvent(report.artifacts.eventsPath, "verification.finalized", { verifierRunId: report.verifierRunId, reportPath: report.artifacts.reportPath, browserProofPath: resolve(proofPath), status: report.verdict })
   await Bun.write(proof.reportPath, `${JSON.stringify(sanitizeVerificationValue(report), null, 2)}\n`)
   await writeBrief(report)
-  const scan = await scanArtifactFiles([proof.reportPath, report.artifacts.eventsPath, report.artifacts.briefPath, resolve(proofPath), ...report.invocations.flatMap((record) => record.journalPath === null ? [] : [record.journalPath])])
+  const scan = await scanArtifactFiles(await existingArtifactPaths([proof.reportPath, report.artifacts.eventsPath, report.artifacts.briefPath, resolve(proofPath), ...report.invocations.flatMap((record) => record.journalPath === null ? [] : [record.journalPath])]))
   report.security.secretScanPassed = scan.passed
   report.security.redactions = getRedactionCount()
   report.verdict = verdictFor(report) ? "PASS" : "FAIL"
@@ -606,6 +606,12 @@ async function countFiles(directory: string): Promise<number> {
     if (entry.isDirectory()) count += await countFiles(join(directory, entry.name))
   }
   return count
+}
+
+async function existingArtifactPaths(paths: string[]): Promise<string[]> {
+  return (await Promise.all([...new Set(paths)].map(async (path) => {
+    try { return (await stat(path)).isFile() ? path : null } catch { return null }
+  }))).filter((path): path is string => path !== null)
 }
 
 async function typecheckGeneratedProtocol(directory: string): Promise<CommandResult> {
@@ -714,6 +720,12 @@ async function gitHistory(): Promise<Array<{ hash: string; subject: string; date
 }
 
 async function main(): Promise<number> {
+  const repairArgumentIndex = process.argv.indexOf("--repair-finalized-report")
+  if (repairArgumentIndex >= 0) {
+    const reportPath = process.argv[repairArgumentIndex + 1]
+    if (!reportPath) throw new Error("--repair-finalized-report requires a report path")
+    return (await repairFinalizedReport(resolve(reportPath))).exitCode
+  }
   const reassessArgumentIndex = process.argv.indexOf("--reassess-report")
   if (reassessArgumentIndex >= 0) {
     const reportPath = process.argv[reassessArgumentIndex + 1]
@@ -728,6 +740,28 @@ async function main(): Promise<number> {
     return (await finalizeFromProof(resolve(proofPath))).exitCode
   }
   return (await runFreshSweep()).exitCode
+}
+
+async function repairFinalizedReport(reportPath: string): Promise<{ exitCode: number }> {
+  const report = JSON.parse(await readFile(reportPath, "utf8")) as VerificationReport
+  if (report.phase !== "finalized" || report.artifacts.reportPath !== reportPath || report.conditions.some((condition) => condition.status !== "passed")) {
+    throw new Error("repair requires the exact finalized report with all required conditions passed")
+  }
+  const paths = await existingArtifactPaths([
+    reportPath,
+    report.artifacts.eventsPath,
+    report.artifacts.briefPath,
+    ...(report.artifacts.browserProofPath === null ? [] : [report.artifacts.browserProofPath]),
+    ...report.invocations.flatMap((record) => record.journalPath === null ? [] : [record.journalPath]),
+  ])
+  const scan = await scanArtifactFiles(paths)
+  report.security.secretScanPassed = scan.passed
+  report.verdict = verdictFor(report) ? "PASS" : "FAIL"
+  await Bun.write(reportPath, `${JSON.stringify(sanitizeVerificationValue(report), null, 2)}\n`)
+  await writeBrief(report)
+  console.log(`Repaired finalized verification report: ${reportPath}`)
+  console.log(`VERDICT: ${report.verdict}`)
+  return { exitCode: report.verdict === "PASS" ? 0 : 1 }
 }
 
 async function reassessReport(reportPath: string): Promise<{ exitCode: number }> {
