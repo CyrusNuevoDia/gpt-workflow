@@ -1,0 +1,10 @@
+{
+  "name": "gpt-workflow",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^7.0"
+  }
+}
