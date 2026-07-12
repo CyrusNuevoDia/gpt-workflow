@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -7,21 +7,26 @@ import {
   formatMirrorReport,
   mirrorPassed,
   syncMirror,
-  transformWorkflow,
+  transformWorkflow
 } from "../scripts/mirror.ts"
 
-async function withDirectories(run: (directories: { sourceDirectory: string; targetDirectory: string }) => Promise<void>): Promise<void> {
+async function withDirectories(
+  run: (directories: {
+    sourceDirectory: string
+    targetDirectory: string
+  }) => Promise<void>
+): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), "gpt-workflow-mirror-"))
   const directories = {
     sourceDirectory: join(root, "source"),
-    targetDirectory: join(root, "target"),
+    targetDirectory: join(root, "target")
   }
   await mkdir(directories.sourceDirectory, { recursive: true })
   await mkdir(directories.targetDirectory, { recursive: true })
   try {
     await run(directories)
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await rm(root, { force: true, recursive: true })
   }
 }
 
@@ -29,7 +34,7 @@ test("sync discovers direct regular JavaScript files and removes only extra mirr
   await withDirectories(async ({ sourceDirectory, targetDirectory }) => {
     const source = [
       "const sourcePath = '.claude/workflows/alpha.js'",
-      "const models = ['haiku', 'sonnet']",
+      "const models = ['haiku', 'sonnet']"
     ].join("\n")
     await writeFile(join(sourceDirectory, "alpha.js"), source)
     await mkdir(join(sourceDirectory, "nested"))
@@ -39,14 +44,22 @@ test("sync discovers direct regular JavaScript files and removes only extra mirr
     await writeFile(join(targetDirectory, "keep.txt"), "keep me")
 
     const syncReport = await syncMirror({ sourceDirectory, targetDirectory })
-    expect(syncReport).toEqual({ discovered: 1, written: 1, removed: 1 })
-    expect(await readFile(join(targetDirectory, "alpha.js"), "utf8")).toBe(transformWorkflow(source))
-    expect(await readFile(join(targetDirectory, "keep.txt"), "utf8")).toBe("keep me")
+    expect(syncReport).toEqual({ discovered: 1, removed: 1, written: 1 })
+    expect(await readFile(join(targetDirectory, "alpha.js"), "utf8")).toBe(
+      transformWorkflow(source)
+    )
+    expect(await readFile(join(targetDirectory, "keep.txt"), "utf8")).toBe(
+      "keep me"
+    )
     await expect(readFile(join(targetDirectory, "extra.js"))).rejects.toThrow()
 
     const checkReport = await checkMirror({ sourceDirectory, targetDirectory })
     expect(mirrorPassed(checkReport)).toBe(true)
-    expect(checkReport).toMatchObject({ discovered: 1, target: 1, compared: 1 })
+    expect(checkReport).toMatchObject({
+      compared: 1,
+      discovered: 1,
+      target: 1
+    })
   })
 })
 
@@ -57,7 +70,12 @@ test("check rejects a missing mirror in a temporary directory", async () => {
     const report = await checkMirror({ sourceDirectory, targetDirectory })
 
     expect(mirrorPassed(report)).toBe(false)
-    expect(report).toMatchObject({ discovered: 1, target: 0, compared: 0, missing: ["alpha.js"] })
+    expect(report).toMatchObject({
+      compared: 0,
+      discovered: 1,
+      missing: ["alpha.js"],
+      target: 0
+    })
     expect(formatMirrorReport(report)).toContain("Result: FAIL")
   })
 })
@@ -71,6 +89,11 @@ test("check rejects stale Claude model text in a mirror", async () => {
     const report = await checkMirror({ sourceDirectory, targetDirectory })
 
     expect(mirrorPassed(report)).toBe(false)
-    expect(report).toMatchObject({ discovered: 1, target: 1, compared: 1, drifted: ["alpha.js"] })
+    expect(report).toMatchObject({
+      compared: 1,
+      discovered: 1,
+      drifted: ["alpha.js"],
+      target: 1
+    })
   })
 })
