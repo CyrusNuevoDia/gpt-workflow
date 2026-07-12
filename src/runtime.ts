@@ -1,4 +1,5 @@
 import * as vm from "node:vm"
+import type { AppServerClient } from "./app-server.ts"
 
 export type JSONPrimitive = string | number | boolean | null
 export type JSONValue = JSONPrimitive | JSONArray | JSONObject
@@ -63,6 +64,7 @@ export interface OfflineBudgetOptions {
 export interface WorkflowExecutionOptions {
   args?: JSONValue
   agent?: WorkflowAgent
+  appServer?: AppServerClient
   workflow?: WorkflowChild
   budget?: OfflineBudgetOptions
   fileName?: string
@@ -684,7 +686,7 @@ export async function runWorkflowScript(
     remaining: budgetRemaining,
   }))
 
-  const runAgent = options.agent ?? (() => {
+  const runAgent = options.agent ?? options.appServer?.agent.bind(options.appServer) ?? (() => {
     throw new Error("agent() is unavailable in the offline workflow runtime")
   })
   const agent = makeSafeHostFunction(async (prompt: unknown, rawOptions?: unknown) => {

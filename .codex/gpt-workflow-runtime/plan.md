@@ -101,34 +101,60 @@ Evidence
 
 ## Phase 3: Integrate Codex App Server as the agent substrate
 
-Status: in progress
+Status: complete
 
 Implementation
 
-- [ ] Spawn and supervise App Server over stdio.
-- [ ] Implement JSON-RPC initialization, request correlation, notification
+- [x] Spawn and supervise App Server over stdio.
+- [x] Implement JSON-RPC initialization, request correlation, notification
   routing, timeouts, shutdown, and explicit process/protocol failure handling.
-- [ ] Generate or validate protocol types against the installed Codex binary.
-- [ ] Discover and validate Luna and Terra through `model/list` before live work.
-- [ ] Implement text and schema-constrained `agent()` results using authoritative
+- [x] Generate or validate protocol types against the installed Codex binary.
+- [x] Discover and validate Luna and Terra through `model/list` before live work.
+- [x] Implement text and schema-constrained `agent()` results using authoritative
   completed items.
 
 Verification
 
-- [ ] Repeat the persistent initialize and model-list readiness probe through
+- [x] Repeat the persistent initialize and model-list readiness probe through
   the runtime rather than a hand-written pipe.
-- [ ] Run one Luna text agent and one Terra structured agent.
-- [ ] Prove malformed JSON-RPC, early EOF, request timeout, and model absence fail
+- [x] Run one Luna text agent and one Terra structured agent.
+- [x] Prove malformed JSON-RPC, early EOF, request timeout, and model absence fail
   explicitly.
 
 Exit criteria
 
-- [ ] R3, R4, and R8 pass on the real App Server.
-- [ ] Production runtime search finds no `codex exec`, SDK, or WebSocket path.
+- [x] R3, R4, and R8 pass on the real App Server.
+- [x] Production runtime search finds no `codex exec`, SDK, or WebSocket path.
+
+Evidence
+
+- Installed protocol: Codex `0.144.0`; `generate-ts --experimental` produced
+  671 TypeScript files; persistent stdio initialization succeeded.
+- `model/list`: one complete page, `nextCursor: null`; literal
+  `gpt-5.6-luna` and `gpt-5.6-terra` both discovered before live turns.
+- `bun run check` and `bun run verify:offline`: exit 0; 36 tests passed, 0
+  failed, 100 assertions after parent integration review; mirror 13/13.
+- Focused fake-process coverage proves initialize ordering, backpressure,
+  out-of-order request correlation, malformed JSON/unknown responses, EOF,
+  process exit, request and turn timeouts, model pagination/absence,
+  authoritative completed-item results, terminal failures, and schema rejection.
+- Parent live Phase 3 command: `bun scripts/verify-live.ts --phase3`, exit 0,
+  `PHASE_3_VERDICT: PASS`.
+- Luna text evidence: thread `019f55b3-fe1a-7181-9276-7c61af105416`, turn
+  `019f55b4-04fb-72c3-90f4-8661a3b672a6`, authoritative item
+  `msg_0b3482bfce578613016a53614dd6148198aaf1d6c5f8e316df`.
+- Terra structured evidence: thread `019f55b4-18b2-7670-bf38-b68473129672`,
+  turn `019f55b4-1d2d-7283-9446-8a3c8eb54556`, authoritative item
+  `msg_03c1820b2f021a01016a536152b148819bb0594d4e840900e8`.
+- The first parent Terra probe exposed App Server's recursive
+  `additionalProperties: false` requirement. The runtime now normalizes object
+  schemas at the transport boundary while AJV validates results against the
+  workflow-authored schema; the next Terra probe and full Phase 3 probe passed.
+- Luna/xhigh implementation session: `019f559c-5d03-7350-9e07-fbf3616be763`.
 
 ## Phase 4: Stream and control live agents
 
-Status: pending
+Status: in progress
 
 Implementation
 
