@@ -783,7 +783,8 @@ async function executeWorkflow(
         ...(isolation ? { sandbox: "workspace-write" } : {}),
         ...(worktree === null && options.cwd === undefined ? {} : { cwd: worktree?.path ?? requestedCwd }),
       } satisfies JSONObject
-      state.markLiveAgent()
+      const requestedModel = typeof (callOptions as JSONObject).model === "string" ? (callOptions as JSONObject).model as string : "unknown"
+      state.markLiveAgent(requestedModel)
       if (options.agent) {
         return await waitForCancellation(Promise.resolve(options.agent(prompt, callOptions)), state.signal)
       }
@@ -799,7 +800,7 @@ async function executeWorkflow(
       try {
         options.onAgentStart?.(handle)
         const call = await waitForCancellation(handle.result(), state.signal)
-        state.budget.recordTokens(extractUsageTokens(call.evidence.usage))
+        state.budget.recordTokens(extractUsageTokens(call.evidence.usage), requestedModel)
         return call.result
       } finally {
         unregister()
@@ -818,7 +819,7 @@ async function executeWorkflow(
       ? runContext.journal?.replay(replayIndex, key) ?? null
       : null
     if (replay !== null) {
-      state.markReplayedAgent()
+      state.markReplayedAgent(typeof agentOptions?.model === "string" ? agentOptions.model : "unknown")
       return cloneJSONValue(replay.result, "replayed agent result")
     }
     if (runContext.resumeEnabled && key !== null) runContext.replayMissed = true

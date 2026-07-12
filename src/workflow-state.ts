@@ -21,6 +21,13 @@ export interface WorkflowUsage {
   replayedAgentCount: number
   subagentTokens: number
   peakConcurrentAgents: number
+  modelUsage: Record<string, WorkflowModelUsage>
+}
+
+export interface WorkflowModelUsage {
+  liveAgentCount: number
+  replayedAgentCount: number
+  subagentTokens: number
 }
 
 export interface WorkflowBudgetState {
@@ -28,7 +35,7 @@ export interface WorkflowBudgetState {
   spent(): number
   remaining(): number
   assertAvailable(): void
-  recordTokens(tokens: number): void
+  recordTokens(tokens: number, model?: string): void
 }
 
 interface ScheduledTask {
@@ -116,6 +123,7 @@ export class WorkflowRunState {
     replayedAgentCount: 0,
     subagentTokens: 0,
     peakConcurrentAgents: 0,
+    modelUsage: {},
   }
   readonly budget: WorkflowBudgetState
   private readonly queue: AgentQueue
@@ -150,10 +158,11 @@ export class WorkflowRunState {
           throw new WorkflowCapError(`agent() budget cap reached: spent=${readSource() + recordedTokens}, total=${options.budgetTotal}`)
         }
       },
-      recordTokens: (tokens) => {
+      recordTokens: (tokens, model = "unknown") => {
         if (!Number.isFinite(tokens) || tokens < 0) throw new TypeError("agent usage tokens must be finite and non-negative")
         recordedTokens += tokens
         this.usage.subagentTokens += tokens
+        this.modelBucket(model).subagentTokens += tokens
       },
     }
     if (options.signal) {
@@ -177,12 +186,23 @@ export class WorkflowRunState {
     return this.queue.schedule(run, this.signal)
   }
 
-  markLiveAgent(): void {
+  markLiveAgent(model = "unknown"): void {
     this.usage.liveAgentCount++
+    this.modelBucket(model).liveAgentCount++
   }
 
-  markReplayedAgent(): void {
+  markReplayedAgent(model = "unknown"): void {
     this.usage.replayedAgentCount++
+    this.modelBucket(model).replayedAgentCount++
+  }
+
+  private modelBucket(model: string): WorkflowModelUsage {
+    const key = model.length > 0 ? model : "unknown"
+    const existing = this.usage.modelUsage[key]
+    if (existing) return existing
+    const bucket = { liveAgentCount: 0, replayedAgentCount: 0, subagentTokens: 0 }
+    this.usage.modelUsage[key] = bucket
+    return bucket
   }
 
   registerHandle(handle: AppServerAgentHandle): () => void {
