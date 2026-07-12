@@ -9,37 +9,50 @@ evidence, a failed verification, or a completed milestone.
 
 ## Phase 1: Bootstrap the executable verifier and workflow mirror
 
-Status: in progress
+Status: complete
 
 Implementation
 
-- [ ] Add the `check`, `verify:offline`, `verify:live`, and `verify` Bun command
+- [x] Add the `check`, `verify:offline`, `verify:live`, and `verify` Bun command
   contract without hiding failed subprocesses.
-- [ ] Build the mechanical `.claude/workflows/` to `.codex/workflows/` mirror.
-- [ ] Map `haiku` to `gpt-5.6-luna`, `sonnet` to `gpt-5.6-terra`, and Claude
+- [x] Build the mechanical `.claude/workflows/` to `.codex/workflows/` mirror.
+- [x] Map `haiku` to `gpt-5.6-luna`, `sonnet` to `gpt-5.6-terra`, and Claude
   workflow paths to Codex workflow paths.
-- [ ] Add a drift checker that discovers workflow files rather than hard-coding
+- [x] Add a drift checker that discovers workflow files rather than hard-coding
   their count.
-- [ ] Establish ignored, secret-safe locations for verification reports and
+- [x] Establish ignored, secret-safe locations for verification reports and
   append-only event artifacts.
 
 Verification
 
-- [ ] Run the R2 mirror checker against the real suite and record its discovered
+- [x] Run the R2 mirror checker against the real suite and record its discovered
   and compared totals.
-- [ ] Run negative controls for a missing mirror and stale Claude model.
-- [ ] Run `bun run check` and `git diff --check`.
+- [x] Run negative controls for a missing mirror and stale Claude model.
+- [x] Run `bun run check` and `git diff --check`.
 
 Exit criteria
 
-- [ ] R1's command surface exists and fails honestly for unimplemented live
+- [x] R1's command surface exists and fails honestly for unimplemented live
   behavior.
-- [ ] R2 passes, including `parity-12-resume` and all companion probes.
-- [ ] The next phase can run without manually editing generated workflow copies.
+- [x] R2 passes, including `parity-12-resume` and all companion probes.
+- [x] The next phase can run without manually editing generated workflow copies.
+
+Evidence
+
+- `bun run check`: exit 0; TypeScript clean; 3 tests passed, 0 failed, 11
+  assertions; mirror discovered=13, target=13, compared=13, no drift.
+- `bun run verify:offline`: exit 0 with the same complete mirror evidence.
+- `bun run verify:live`: expected exit 1 with the explicit App Server
+  not-implemented message.
+- `bun run verify`: expected exit 1 only when it reaches `verify:live`.
+- Forbidden-string sweep over `.codex/workflows`: no Claude model or workflow
+  path matches.
+- Luna/xhigh delegate session: `019f557d-9cfc-7c01-b91e-790a8441e499`;
+  parent reviewed the full diff and materialized the protected mirror.
 
 ## Phase 2: Prove the deterministic workflow VM offline
 
-Status: pending
+Status: in progress
 
 Implementation
 
@@ -181,11 +194,11 @@ Exit criteria
   temporary directory.
 - Persistent `model/list` returned both `gpt-5.6-luna` and
   `gpt-5.6-terra`, with `nextCursor: null`.
-- Baseline remains incomplete: `package.json` has no scripts and
-  `.codex/workflows/` is absent.
+- Phase 1 added the command surface and complete 13-file Codex mirror; live
+  execution remains intentionally unimplemented at the Phase 2 boundary.
 
 ## Next action
 
-Activate the goal, then implement the smallest honest R1/R2 slice: the command
-surface, mechanical workflow mirror, and drift checker. Commit the verified
-milestone together with this plan's evidence.
+Implement the smallest offline VM slice for R5/R6: literal `meta` parsing,
+top-level async script execution, deterministic guards, and tests that prove the
+sandbox boundary before adding orchestration behavior.

@@ -3,6 +3,14 @@
   "module": "index.ts",
   "type": "module",
   "private": true,
+  "scripts": {
+    "check": "bunx tsc --noEmit && bun test tests/mirror.test.ts && bun run mirror:check",
+    "mirror:sync": "bun scripts/mirror.ts sync",
+    "mirror:check": "bun scripts/mirror.ts check",
+    "verify:offline": "bun run check",
+    "verify:live": "bun scripts/verify-live.ts",
+    "verify": "bun run verify:offline && bun run verify:live"
+  },
   "devDependencies": {
     "@types/bun": "latest",
     "typescript": "^7.0"

@@ -32,3 +32,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Finder (MacOS) folder config
 .DS_Store
+
+# Future verification reports and append-only events; keep runtime data secret-safe
+/.verification-artifacts/
