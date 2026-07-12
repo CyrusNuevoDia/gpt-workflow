@@ -213,6 +213,7 @@ export interface AppServerAgentOptions {
   schema?: AppServerJSONObject
   label?: string
   phase?: string
+  agentType?: string
   sandbox?: "read-only" | "workspace-write" | "danger-full-access"
   approvalPolicy?: "untrusted" | "on-request" | "never"
   /** Host-only attribution and observation controls; never sent to App Server. */
@@ -816,6 +817,7 @@ export class AppServerClient {
       approvalPolicy,
       sandbox,
       ephemeral: true,
+      ...(options.agentType === undefined ? {} : { developerInstructions: agentTypeInstructions(options.agentType) }),
       ...(cwd === undefined ? {} : { cwd }),
     }))
     const workflowRunId = options.workflowRunId ?? `workflow-${randomUUID()}`
@@ -1445,6 +1447,13 @@ export class AppServerClient {
     try { this.process.kill("SIGTERM") } catch { /* already exited */ }
     this.resolveExit()
   }
+}
+
+function agentTypeInstructions(agentType: string): string {
+  if (agentType.toLowerCase() === "explore") {
+    return "Act as a read-only repository exploration agent. Do not edit files. When searching, include hidden and ignored directories where relevant (for example, use fd -H -I). Verify filesystem claims with tools before answering."
+  }
+  return `Act as the ${agentType} repository subagent requested by the parent workflow.`
 }
 
 function sandboxPolicyFor(

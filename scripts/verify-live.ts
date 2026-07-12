@@ -203,7 +203,7 @@ return await agent('Give one short progress update. Use the Bash tool to run: pr
   const finalMessageIndex = events.findIndex((event) => event.type === "lifecycle" && event.lifecycle === "completed" && event.subject === "message")
   const messageDeltaIndex = events.findIndex((event) => event.type === "message-delta")
   const intermediateIndex = events.findIndex((event) => ["plan", "reasoning", "command", "file", "tool", "collaboration"].includes(event.type))
-  const turnScoped = events.filter((event) => event.type !== "lifecycle" || event.subject === "turn" || event.subject === "message" || event.subject === "thread")
+  const turnScoped = events.filter((event) => event.type !== "lifecycle" || event.subject !== "thread")
   const terminal = events.find((event) => event.type === "terminal")
   const streamValidation = validateStreamingEvidence(events as unknown as Array<Record<string, unknown>>)
   const evidence = sanitizeVerificationValue({
@@ -261,7 +261,7 @@ return await agent('Start with one progress update, then wait for a verifier ins
   const siblingSource = `
 export const meta = { name: 'phase-6-r10-siblings', description: 'Phase 6 interruption probe' }
 return await parallel([
-  () => agent('Start a progress update and remain active until interrupted.', { model: 'gpt-5.6-luna', label: 'phase6:r10-interrupt', phase: 'R10' }),
+  () => agent('Immediately use the Bash tool to run: sleep 20; printf phase6-interrupt-target. Remain active until the command completes.', { model: 'gpt-5.6-luna', label: 'phase6:r10-interrupt', phase: 'R10' }),
   () => agent('Reply with exactly phase6-sibling-complete.', { model: 'gpt-5.6-luna', label: 'phase6:r10-sibling', phase: 'R10' }),
 ])
 `
@@ -495,7 +495,7 @@ async function runFreshSweep(): Promise<{ exitCode: number; reportPath: string; 
   for (const condition of [...conditions, ...niceToHave]) writer.appendEvent("verification.condition", { condition: condition.id, status: condition.status, evidence: condition.evidence })
   await writer.writeReport(report)
   await writeBrief(report)
-  const artifactFiles = [...new Set([
+  const artifactCandidates = [...new Set([
     writer.reportPath,
     writer.eventsPath,
     report.artifacts.briefPath,
@@ -503,6 +503,9 @@ async function runFreshSweep(): Promise<{ exitCode: number; reportPath: string; 
     ...r9.journalPaths,
     ...r10.journalPaths,
   ])]
+  const artifactFiles = (await Promise.all(artifactCandidates.map(async (path) => {
+    try { return (await stat(path)).isFile() ? path : null } catch { return null }
+  }))).filter((path): path is string => path !== null)
   let scan = await scanArtifactFiles(artifactFiles)
   const r13 = report.conditions.find((condition) => condition.id === "R13")!
   r13.status = scan.passed && writer.errors.length === 0 ? "passed" : "failed"
@@ -598,13 +601,13 @@ import type { TurnInterruptParams } from './v2/TurnInterruptParams.ts'
 const initialize = { clientInfo: { name: 'gpt-workflow', title: 'GPT Workflow Runtime', version: '0.1.0' }, capabilities: { experimentalApi: true, requestAttestation: false } } satisfies InitializeParams
 const modelList = { includeHidden: true, cursor: null } satisfies ModelListParams
 const threadStart = { model: 'gpt-5.6-luna', approvalPolicy: 'never', sandbox: 'read-only', ephemeral: true, cwd: '/tmp' } satisfies ThreadStartParams
-const input = [{ type: 'text', text: 'probe', text_elements: [] }] as const
+const input = [{ type: 'text' as const, text: 'probe', text_elements: [] }]
 const turnStart = { threadId: 'thread', input: [...input], model: 'gpt-5.6-luna', cwd: '/tmp', approvalPolicy: 'never', sandboxPolicy: { type: 'readOnly', networkAccess: false } } satisfies TurnStartParams
 const turnSteer = { threadId: 'thread', input: [...input], expectedTurnId: 'turn' } satisfies TurnSteerParams
 const turnInterrupt = { threadId: 'thread', turnId: 'turn' } satisfies TurnInterruptParams
 void [initialize, modelList, threadStart, turnStart, turnSteer, turnInterrupt]
 `)
-  return runCommand("bunx", ["tsc", "--noEmit", "--strict", "--skipLibCheck", "--moduleResolution", "bundler", "--module", "esnext", "--target", "es2022", "--allowImportingTsExtensions", compatibilityPath], directory)
+  return runCommand("bunx", ["tsc", "--ignoreConfig", "--noEmit", "--strict", "--skipLibCheck", "--moduleResolution", "bundler", "--module", "esnext", "--target", "es2022", "--allowImportingTsExtensions", compatibilityPath], directory)
 }
 
 async function readJournalStartedKeys(path: string): Promise<string[]> {

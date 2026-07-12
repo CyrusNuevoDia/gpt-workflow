@@ -263,7 +263,7 @@ function agentHandler(text: string, status = "completed"): Handler {
 
 test("resolves text only from authoritative completed item state and terminal completion", async () => {
   const { client, process } = await connectFake(agentHandler("authoritative final text"), { requiredModels: REQUIRED_APP_SERVER_MODELS })
-  const call = await client.callAgent("return the final text", { model: "gpt-5.6-luna", label: "text-probe", phase: "Probe" })
+  const call = await client.callAgent("return the final text", { model: "gpt-5.6-luna", agentType: "Explore", label: "text-probe", phase: "Probe" })
   expect(call.result).toBe("authoritative final text")
   expect(call.evidence).toEqual({
     requestedModel: "gpt-5.6-luna",
@@ -278,6 +278,7 @@ test("resolves text only from authoritative completed item state and terminal co
     approvalPolicy: "never",
     sandbox: "read-only",
     ephemeral: true,
+    developerInstructions: expect.stringContaining("read-only repository exploration agent"),
   })
   expect(process.messages.find((message) => message.method === "turn/start")?.params).toMatchObject({
     model: "gpt-5.6-luna",
