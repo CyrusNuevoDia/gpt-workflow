@@ -9,14 +9,23 @@ agents through `agent()`, `parallel()`, `pipeline()`, and `workflow()`.
 The library requires Node.js 24 or newer. The `gpt-workflow` executable requires
 Bun. A live agent run also requires an installed, authenticated Codex CLI.
 
-From a hosted GitHub checkout:
+Install the CLI globally with Bun:
 
 ```sh
-npm install --global github:CyrusNuevoDia/gpt-workflow#<commit>
+bun add --global gpt-workflow
 ```
 
-The repository has not been published to the npm registry. Contributors can
-install the source checkout with `npm install` or `bun install`.
+Install the library in a project with Bun:
+
+```sh
+bun add gpt-workflow
+```
+
+Contributors working from a source checkout can install its dependencies with:
+
+```sh
+bun install
+```
 
 ## Run a workflow
 
