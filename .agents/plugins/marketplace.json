@@ -1,0 +1,20 @@
+{
+  "name": "gpt-workflow",
+  "interface": {
+    "displayName": "GPT Workflow"
+  },
+  "plugins": [
+    {
+      "name": "gpt-workflow",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}
