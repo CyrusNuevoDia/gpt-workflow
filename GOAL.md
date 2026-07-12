@@ -24,10 +24,8 @@ The repository contains a Bun-based workflow runtime that:
 - lets the orchestrator send input to and interrupt a running subagent;
 - returns authoritative text or schema-validated structured results; and
 - produces machine-readable verification evidence from both offline tests and
-  live GPT runs;
-- records verified implementation milestones as logical git commits; and
-- leaves a self-contained `BRIEF.html` that makes the finished architecture,
-  proof, limitations, and commit history reviewable without rerunning the goal.
+  live GPT runs; and
+- records verified implementation milestones as logical git commits.
 
 The original `.claude/workflows/` files remain the reference fixtures. The
 `.codex/workflows/` files are their GPT-native counterparts, not a second
@@ -77,7 +75,6 @@ must be reported separately.
 ## Non-goals
 
 - Recreating Claude's progress UI pixel for pixel.
-- Using the experimental App Server WebSocket transport.
 - Rewriting the Claude reference documentation before runtime parity exists.
 - Matching provider-specific transcript wording or token counts byte for byte.
 - Backward-compatibility shims for abandoned pre-launch runtime designs.

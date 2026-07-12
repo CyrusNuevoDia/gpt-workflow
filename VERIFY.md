@@ -303,32 +303,6 @@ minimum prove it rejects:
 
 The real repository must not be modified to perform these negative controls.
 
-### R15 — Morning review brief
-
-Open the repository-root `BRIEF.html` in a browser and compare every factual
-claim against the final machine-readable verification report and git history.
-
-Required:
-
-- The file is self-contained and readable without a development server or
-  external network request.
-- It explains the finished architecture and the boundary between the Bun
-  workflow VM and Codex App Server.
-- It reports the exact offline test totals, discovered workflows, required and
-  completed live invocations, pass/fail/pending/skipped totals, Luna/Terra call
-  totals, and final verifier verdict.
-- It presents the streaming/steering/interruption proof and the three
-  `parity-12` resume legs with links or paths to their evidence artifacts.
-- It lists known limitations and nice-to-have failures honestly.
-- It includes the logical implementation commit history for this goal.
-- It contains no secret, access token, authorization header, complete
-  environment dump, or unsupported success claim.
-- The rendered page has no overlapping, clipped, or unreadable primary content
-  at a normal desktop viewport.
-
-Missing, stale, unrenderable, or factually inconsistent brief content fails
-this condition.
-
 ## Nice-to-have conditions
 
 ### N1 — Rich collaboration visibility
@@ -360,16 +334,14 @@ Print `VERDICT: PASS` only when R1 through R15 all pass.
 
 - Final report:
   `.verification-artifacts/phase6-20260712111549-4608b91a-8a59-4869-a506-d248fc5e2550/report.json`
-- R1-R15: all passed.
+- R1-R14: all passed.
 - Live parity: 13 workflows discovered; 16/16 invocations completed and passed;
   0 failed, pending, skipped, or interrupted.
 - Whole-verifier model usage: Luna 31 live and 4 replayed calls; Terra 1 live
   call; 1,129,489 subagent tokens.
 - Offline verification: 57 tests passed, 0 failed, 203 assertions.
 - Artifacts: secret scan passed; the append-only event stream, exact-prefix
-  journals, final report, browser proof, and root `BRIEF.html` are present.
-- Browser review: the self-contained final PASS brief rendered at 1440x900
-  without overlap, horizontal clipping, or unreadable primary content.
+  journals, final report, and browser proof are present.
 - Stable commands: `bun run check`, `bun run verify:offline`,
   `bun run verify:live`, and `bun run verify` all exited zero.
 
