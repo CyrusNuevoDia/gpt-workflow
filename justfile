@@ -1,5 +1,5 @@
 check:
-    #!/usr/bin/env zsh
+    #!/usr/bin/env bash
     set -euo pipefail
     trap 'rm -rf .verification-artifacts' EXIT
     bunx ultracite check
