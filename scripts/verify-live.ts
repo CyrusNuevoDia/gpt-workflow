@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process"
 import { randomUUID } from "node:crypto"
-import { readFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, join, resolve } from "node:path"
@@ -203,7 +203,6 @@ return await agent('Give one short progress update. Use the Bash tool to run: pr
   const finalMessageIndex = events.findIndex((event) => event.type === "lifecycle" && event.lifecycle === "completed" && event.subject === "message")
   const messageDeltaIndex = events.findIndex((event) => event.type === "message-delta")
   const intermediateIndex = events.findIndex((event) => ["plan", "reasoning", "command", "file", "tool", "collaboration"].includes(event.type))
-  const turnScoped = events.filter((event) => event.type !== "lifecycle" || event.subject !== "thread")
   const terminal = events.find((event) => event.type === "terminal")
   const streamValidation = validateStreamingEvidence(events as unknown as Array<Record<string, unknown>>)
   const evidence = sanitizeVerificationValue({
@@ -214,7 +213,7 @@ return await agent('Give one short progress update. Use the Bash tool to run: pr
     intermediateObservedWhileRunning,
     authoritativeMessageBeforeTerminal: finalMessageIndex >= 0 && terminalIndex > finalMessageIndex,
     lifecycleOrdered: lifecycleOrdered(events),
-    attribution: events.length > 0 && events.every((event) => event.workflowRunId === runId && event.agentId === `${runId}:agent-1` && event.label === "phase6:r9-stream" && event.phase === "R9" && event.requestedModel === "gpt-5.6-luna" && event.threadId !== null) && turnScoped.every((event) => event.turnId !== null),
+    attribution: hasR9Attribution(events, runId),
     terminalStatus: terminal?.status ?? null,
     terminalUsagePresent: terminal?.status === "completed" && terminal.usage !== null,
     itemAttributionPresent: events.some((event) => event.itemId !== null && event.threadId !== null && event.turnId !== null),
@@ -222,8 +221,29 @@ return await agent('Give one short progress update. Use the Bash tool to run: pr
     result: execution.result,
   })
   const values = evidence as Record<string, VerificationJSON>
-  const passed = streamValidation.ok && values.messageDeltaBeforeTerminal === true && values.intermediateCategoryBeforeTerminal === true && values.messageObservedWhileRunning === true && values.intermediateObservedWhileRunning === true && values.authoritativeMessageBeforeTerminal === true && values.lifecycleOrdered === true && values.attribution === true && values.terminalUsagePresent === true && values.itemAttributionPresent === true && typeof execution.result === "string" && execution.result.includes("phase6-stream-ok")
+  const passed = streamValidation.ok && r9EvidencePassed(values)
   return { passed, evidence, usage: [sanitizeVerificationValue(execution.usage)], journalPaths: execution.journalPath === null ? [] : [execution.journalPath] }
+}
+
+function hasR9Attribution(events: AppServerNormalizedEvent[], runId: string): boolean {
+  const turnApplicable = events.filter((event) => event.method !== "thread/start" && !event.method.startsWith("mcpServer/"))
+  return events.length > 0
+    && events.every((event) => event.workflowRunId === runId && event.agentId === `${runId}:agent-1` && event.label === "phase6:r9-stream" && event.phase === "R9" && event.requestedModel === "gpt-5.6-luna" && event.threadId !== null)
+    && turnApplicable.every((event) => event.turnId !== null)
+}
+
+function r9EvidencePassed(values: Record<string, VerificationJSON>): boolean {
+  return values.messageDeltaBeforeTerminal === true
+    && values.intermediateCategoryBeforeTerminal === true
+    && values.messageObservedWhileRunning === true
+    && values.intermediateObservedWhileRunning === true
+    && values.authoritativeMessageBeforeTerminal === true
+    && values.lifecycleOrdered === true
+    && values.attribution === true
+    && values.terminalUsagePresent === true
+    && values.itemAttributionPresent === true
+    && typeof values.result === "string"
+    && values.result.includes("phase6-stream-ok")
 }
 
 function lifecycleOrdered(events: AppServerNormalizedEvent[]): boolean {
@@ -694,6 +714,12 @@ async function gitHistory(): Promise<Array<{ hash: string; subject: string; date
 }
 
 async function main(): Promise<number> {
+  const reassessArgumentIndex = process.argv.indexOf("--reassess-report")
+  if (reassessArgumentIndex >= 0) {
+    const reportPath = process.argv[reassessArgumentIndex + 1]
+    if (!reportPath) throw new Error("--reassess-report requires a report path")
+    return (await reassessReport(resolve(reportPath))).exitCode
+  }
   const proofArgumentIndex = process.argv.indexOf("--browser-proof")
   const proofPath = proofArgumentIndex >= 0 ? process.argv[proofArgumentIndex + 1] : await findLatestProof()
   if (proofPath) {
@@ -702,6 +728,37 @@ async function main(): Promise<number> {
     return (await finalizeFromProof(resolve(proofPath))).exitCode
   }
   return (await runFreshSweep()).exitCode
+}
+
+async function reassessReport(reportPath: string): Promise<{ exitCode: number }> {
+  const report = JSON.parse(await readFile(reportPath, "utf8")) as VerificationReport
+  if (report.phase !== "fresh" || report.artifacts.reportPath !== reportPath) throw new Error("reassessment requires the exact fresh report path")
+  const blocking = report.conditions.filter((condition) => condition.id !== "R9" && condition.id !== "R15" && condition.status !== "passed")
+  if (blocking.length > 0 || report.invocations.some((invocation) => invocation.status !== "passed")) {
+    throw new Error(`reassessment refused because other required evidence failed: ${blocking.map((condition) => condition.id).join(", ")}`)
+  }
+  const source = await readFile(report.artifacts.eventsPath, "utf8")
+  const events = source.split("\n").filter(Boolean).flatMap((line) => {
+    try {
+      const event = JSON.parse(line) as AppServerNormalizedEvent
+      return event.workflowRunId === `${report.verifierRunId}-r9` ? [event] : []
+    } catch { return [] }
+  })
+  const r9 = report.conditions.find((condition) => condition.id === "R9")
+  if (!r9 || r9.evidence === null || typeof r9.evidence !== "object" || Array.isArray(r9.evidence)) throw new Error("R9 evidence is unavailable")
+  const evidence = r9.evidence as Record<string, VerificationJSON>
+  evidence.attribution = hasR9Attribution(events, `${report.verifierRunId}-r9`)
+  r9.status = r9EvidencePassed(evidence) ? "passed" : "failed"
+  report.verdict = verdictFor(report) ? "PASS" : "FAIL"
+  await Bun.write(reportPath, `${JSON.stringify(sanitizeVerificationValue(report), null, 2)}\n`)
+  await writeBrief(report)
+  const scan = await scanArtifactFiles([reportPath, report.artifacts.eventsPath, report.artifacts.briefPath, ...report.invocations.flatMap((record) => record.journalPath === null ? [] : [record.journalPath]).filter((path) => existsSync(path))])
+  report.security.secretScanPassed = scan.passed
+  report.verdict = verdictFor(report) ? "PASS" : "FAIL"
+  await Bun.write(reportPath, `${JSON.stringify(sanitizeVerificationValue(report), null, 2)}\n`)
+  console.log(`Reassessed existing verification report: ${reportPath}`)
+  console.log(`VERDICT: ${report.verdict}`)
+  return { exitCode: report.conditions.find((condition) => condition.id === "R9")?.status === "passed" ? 0 : 1 }
 }
 
 async function reuseFinalizedReport(proofPath: string): Promise<{ exitCode: number } | null> {
