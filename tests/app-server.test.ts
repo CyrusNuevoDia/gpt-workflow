@@ -8,6 +8,7 @@ import {
   AppServerTimeoutError,
   AppServerTurnError,
   REQUIRED_APP_SERVER_MODELS,
+  type AppServerAgentHandle,
   type AppServerProcess,
   type AppServerSpawner,
 } from "../src/app-server.ts"
@@ -287,14 +288,208 @@ test("resolves text only from authoritative completed item state and terminal co
   await client.close()
 })
 
+test("normalizes early lifecycle and intermediate events with complete run attribution", async () => {
+  let timestamp = 1000
+  const { client, process } = await connectFake((message, process) => {
+    if (message.method === "model/list") {
+      process.respond({ id: message.id, result: { data: [{ id: "gpt-5.6-luna", model: "gpt-5.6-luna" }], nextCursor: null } })
+      return
+    }
+    if (message.method === "thread/start") {
+      process.respond({ id: message.id, result: { thread: { id: "thread-events" }, model: "gpt-5.6-luna" } })
+      return
+    }
+    if (message.method !== "turn/start") return
+    const params = message.params as Message
+    const threadId = params.threadId as string
+    process.respond({ method: "item/started", params: {
+      threadId,
+      turnId: "turn-events",
+      startedAtMs: 1,
+      item: { type: "agentMessage", id: "item-final", text: "" },
+    } })
+    process.respond({ method: "item/agentMessage/delta", params: { threadId, turnId: "turn-events", itemId: "item-final", delta: "stale intermediate" } })
+    process.respond({ id: message.id, result: { turn: { id: "turn-events" } } })
+    queueMicrotask(() => {
+      process.respond({ method: "item/plan/delta", params: { threadId, turnId: "turn-events", itemId: "plan-1", delta: "inspect" } })
+      process.respond({ method: "item/reasoning/summaryTextDelta", params: { threadId, turnId: "turn-events", itemId: "reason-1", summaryIndex: 0, delta: "because" } })
+      process.respond({ method: "item/commandExecution/outputDelta", params: { threadId, turnId: "turn-events", itemId: "command-1", delta: "output" } })
+      process.respond({ method: "item/fileChange/patchUpdated", params: { threadId, turnId: "turn-events", itemId: "file-1", changes: [{ path: "src/app.ts" }] } })
+      process.respond({ method: "item/mcpToolCall/progress", params: { threadId, turnId: "turn-events", itemId: "tool-1", message: "working" } })
+      process.respond({ method: "item/started", params: {
+        threadId,
+        turnId: "turn-events",
+        startedAtMs: 2,
+        item: { type: "collabAgentToolCall", id: "collab-1", status: "inProgress", senderThreadId: threadId, receiverThreadIds: [], prompt: null },
+      } })
+      process.respond({ method: "item/completed", params: {
+        threadId,
+        turnId: "turn-events",
+        completedAtMs: 3,
+        item: { type: "collabAgentToolCall", id: "collab-1", status: "completed", senderThreadId: threadId, receiverThreadIds: [], prompt: null },
+      } })
+      process.respond({ method: "thread/tokenUsage/updated", params: {
+        threadId,
+        turnId: "turn-events",
+        tokenUsage: { total: { totalTokens: 19 }, last: { totalTokens: 19 }, modelContextWindow: 1000 },
+      } })
+      process.respond({ method: "warning", params: { threadId, message: "non-fatal warning" } })
+      process.respond({ method: "error", params: { threadId, turnId: "turn-events", error: { message: "retryable error" }, willRetry: true } })
+      process.respond({ method: "item/completed", params: {
+        threadId,
+        turnId: "turn-events",
+        completedAtMs: 4,
+        item: { type: "agentMessage", id: "item-final", text: "authoritative nonce-final", phase: null },
+      } })
+      process.respond({ method: "turn/completed", params: {
+        threadId,
+        turn: { id: "turn-events", status: "completed", error: null },
+      } })
+    })
+  }, { requiredModels: ["gpt-5.6-luna"] })
+
+  const handle = await client.startAgent("stream", {
+    model: "gpt-5.6-luna",
+    workflowRunId: "workflow-events",
+    agentId: "agent-events",
+    label: "events-label",
+    phase: "events-phase",
+    eventTimestamp: () => timestamp++,
+  })
+  const call = await handle.result()
+  expect(call.result).toBe("authoritative nonce-final")
+
+  const eventLog = [...handle.eventLog]
+  expect(eventLog.map((event) => event.type)).toEqual([
+    "lifecycle", "lifecycle", "lifecycle", "message-delta", "plan", "reasoning",
+    "command", "file", "tool", "collaboration", "collaboration", "usage", "warning", "error", "lifecycle", "terminal",
+  ])
+  expect(eventLog.map((event) => event.sequence)).toEqual(eventLog.map((_, index) => index + 1))
+  expect(eventLog.every((event) => event.workflowRunId === "workflow-events" && event.agentId === "agent-events" && event.label === "events-label" && event.phase === "events-phase" && event.requestedModel === "gpt-5.6-luna" && event.resolvedModel === "gpt-5.6-luna" && event.threadId === "thread-events")).toBe(true)
+  expect(eventLog.find((event) => event.type === "lifecycle" && event.subject === "turn" && event.lifecycle === "started")).toMatchObject({ turnId: "turn-events" })
+  expect(eventLog.filter((event) => ["message-delta", "plan", "reasoning", "command", "file", "tool", "collaboration", "terminal"].includes(event.type)).every((event) => event.turnId === "turn-events")).toBe(true)
+  expect(eventLog.every((event) => event.timestamp >= 1000)).toBe(true)
+  expect(eventLog.find((event) => event.type === "message-delta" && event.method === "item/agentMessage/delta")?.sequence).toBeLessThan(
+    eventLog.find((event) => event.type === "terminal")?.sequence ?? Infinity,
+  )
+  expect(eventLog.find((event) => event.type === "terminal")).toMatchObject({ status: "completed", usage: { total: { totalTokens: 19 } } })
+  expect(call.evidence).toMatchObject({ usage: { total: { totalTokens: 19 } }, terminalStatus: "completed" })
+  await client.close()
+  expect(process.messages.filter((message) => message.method === "turn/start")).toHaveLength(1)
+})
+
 test("runWorkflowScript uses the App Server client when no offline agent stub is supplied", async () => {
   const { client } = await connectFake(agentHandler("runtime-wired"), { requiredModels: ["gpt-5.6-luna"] })
+  let startedHandle: AppServerAgentHandle | undefined
   const execution = await runWorkflowScript(
     "export const meta = { name: 'live', description: 'live' }\nreturn await agent('say runtime-wired', { model: 'gpt-5.6-luna' })",
-    { appServer: client },
+    {
+      appServer: client,
+      workflowRunId: "workflow-runtime",
+      eventTimestamp: (() => { let timestamp = 1; return () => timestamp++ })(),
+      onAgentStart: (handle) => { startedHandle = handle },
+    },
   )
   expect(execution.result).toBe("runtime-wired")
+  expect(execution.workflowRunId).toBe("workflow-runtime")
+  expect(execution.agentEvents.length).toBeGreaterThan(0)
+  expect(execution.agentEvents.every((event) => event.workflowRunId === "workflow-runtime" && event.agentId === "workflow-runtime:agent-1")).toBe(true)
+  expect(startedHandle).toMatchObject({ workflowRunId: "workflow-runtime", agentId: "workflow-runtime:agent-1" })
   expect(client.lastAgentCallEvidence).toMatchObject({ requestedModel: "gpt-5.6-luna", threadId: "thread-1", turnId: "turn-1" })
+  await client.close()
+})
+
+test("throwing progress observers do not fail the App Server transport or active turn", async () => {
+  const { client } = await connectFake(agentHandler("observer-safe"), { requiredModels: ["gpt-5.6-luna"] })
+  client.subscribeEvents(() => { throw new Error("global observer failure") })
+  await expect(client.callAgent("complete", {
+    model: "gpt-5.6-luna",
+    eventSink: () => { throw new Error("agent observer failure") },
+  })).resolves.toMatchObject({ result: "observer-safe" })
+  expect(client.status).toBe("ready")
+  await client.close()
+})
+
+test("steers the exact active turn and rejects steering after authoritative terminal completion", async () => {
+  const steerMessages: Message[] = []
+  const { client, process } = await connectFake((message, process) => {
+    if (message.method === "model/list") {
+      process.respond({ id: message.id, result: { data: [{ id: "gpt-5.6-luna", model: "gpt-5.6-luna" }], nextCursor: null } })
+    } else if (message.method === "thread/start") {
+      process.respond({ id: message.id, result: { thread: { id: "thread-steer" }, model: "gpt-5.6-luna" } })
+    } else if (message.method === "turn/start") {
+      const params = message.params as Message
+      const threadId = params.threadId as string
+      process.respond({ id: message.id, result: { turn: { id: "turn-steer" } } })
+      queueMicrotask(() => process.respond({ method: "item/agentMessage/delta", params: { threadId, turnId: "turn-steer", itemId: "item-steer", delta: "waiting for verifier" } }))
+    } else if (message.method === "turn/steer") {
+      steerMessages.push(message)
+      const params = message.params as Message
+      expect(params).toMatchObject({ threadId: "thread-steer", expectedTurnId: "turn-steer", input: [{ type: "text", text: "verifier-nonce", text_elements: [] }] })
+      process.respond({ id: message.id, result: { turnId: "turn-steer" } })
+      queueMicrotask(() => {
+        process.respond({ method: "item/agentMessage/delta", params: { threadId: "thread-steer", turnId: "turn-steer", itemId: "item-steer", delta: "verifier-nonce received" } })
+        process.respond({ method: "item/completed", params: { threadId: "thread-steer", turnId: "turn-steer", item: { type: "agentMessage", id: "item-steer", text: "final verifier-nonce" } } })
+        process.respond({ method: "turn/completed", params: { threadId: "thread-steer", turn: { id: "turn-steer", status: "completed", error: null } } })
+      })
+    }
+  }, { requiredModels: ["gpt-5.6-luna"] })
+
+  const handle = await client.startAgent("wait", { model: "gpt-5.6-luna", workflowRunId: "workflow-steer", agentId: "agent-steer" })
+  await expect(handle.steer("wrong-turn", "stale-turn")).rejects.toThrow(/expected active turn turn-steer/)
+  const accepted = await handle.steer("verifier-nonce", "turn-steer")
+  expect(accepted).toEqual({ turnId: "turn-steer" })
+  const result = await handle.result()
+  expect(result.result).toBe("final verifier-nonce")
+  expect(steerMessages).toHaveLength(1)
+  await expect(handle.steer("too late")).rejects.toThrow(/no longer allowed/)
+  expect(process.messages.filter((message) => message.method === "turn/steer")).toHaveLength(1)
+  await client.close()
+})
+
+test("interrupts one sibling turn without cancelling the other", async () => {
+  let threadCount = 0
+  const { client, process } = await connectFake((message, process) => {
+    if (message.method === "model/list") {
+      process.respond({ id: message.id, result: { data: [{ id: "gpt-5.6-luna", model: "gpt-5.6-luna" }], nextCursor: null } })
+      return
+    }
+    if (message.method === "thread/start") {
+      threadCount++
+      process.respond({ id: message.id, result: { thread: { id: `thread-sibling-${threadCount}` }, model: "gpt-5.6-luna" } })
+      return
+    }
+    if (message.method === "turn/start") {
+      const params = message.params as Message
+      const threadId = params.threadId as string
+      const turnId = `${threadId}-turn`
+      process.respond({ id: message.id, result: { turn: { id: turnId } } })
+      if (threadId === "thread-sibling-2") {
+        queueMicrotask(() => {
+          process.respond({ method: "item/completed", params: { threadId, turnId, item: { type: "agentMessage", id: `${threadId}-item`, text: "sibling-two-complete" } } })
+          process.respond({ method: "turn/completed", params: { threadId, turn: { id: turnId, status: "completed", error: null } } })
+        })
+      }
+      return
+    }
+    if (message.method === "turn/interrupt") {
+      const params = message.params as Message
+      expect(params).toEqual({ threadId: "thread-sibling-1", turnId: "thread-sibling-1-turn" })
+      process.respond({ id: message.id, result: {} })
+      queueMicrotask(() => process.respond({ method: "turn/completed", params: { threadId: "thread-sibling-1", turn: { id: "thread-sibling-1-turn", status: "interrupted", error: { message: "requested by verifier" } } } }))
+    }
+  }, { requiredModels: ["gpt-5.6-luna"] })
+
+  const [first, second] = await Promise.all([
+    client.startAgent("sibling one", { model: "gpt-5.6-luna", workflowRunId: "workflow-siblings", agentId: "agent-one" }),
+    client.startAgent("sibling two", { model: "gpt-5.6-luna", workflowRunId: "workflow-siblings", agentId: "agent-two" }),
+  ])
+  await first.interrupt()
+  await expect(first.result()).rejects.toThrow(/interrupted/)
+  await expect(first.interrupt()).resolves.toBeUndefined()
+  await expect(first.steer("after interrupt")).rejects.toThrow(/no longer allowed/)
+  await expect(second.result()).resolves.toMatchObject({ result: "sibling-two-complete", evidence: { threadId: "thread-sibling-2" } })
+  expect(process.messages.filter((message) => message.method === "turn/interrupt")).toHaveLength(1)
   await client.close()
 })
 

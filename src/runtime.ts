@@ -1,5 +1,12 @@
 import * as vm from "node:vm"
-import type { AppServerClient } from "./app-server.ts"
+import { randomUUID } from "node:crypto"
+import type {
+  AppServerAgentOptions,
+  AppServerAgentHandle,
+  AppServerClient,
+  AppServerNormalizedEvent,
+  AppServerNormalizedEventListener,
+} from "./app-server.ts"
 
 export type JSONPrimitive = string | number | boolean | null
 export type JSONValue = JSONPrimitive | JSONArray | JSONObject
@@ -68,6 +75,10 @@ export interface WorkflowExecutionOptions {
   workflow?: WorkflowChild
   budget?: OfflineBudgetOptions
   fileName?: string
+  workflowRunId?: string
+  eventTimestamp?: () => number
+  onAgentEvent?: AppServerNormalizedEventListener
+  onAgentStart?: (handle: AppServerAgentHandle) => void
 }
 
 export interface WorkflowExecution {
@@ -75,6 +86,8 @@ export interface WorkflowExecution {
   result: JSONValue
   events: WorkflowEvent[]
   failures: WorkflowFailure[]
+  workflowRunId: string
+  agentEvents: AppServerNormalizedEvent[]
 }
 
 const MAX_BOUNDARY_ITEMS = 4096
@@ -637,6 +650,13 @@ export async function runWorkflowScript(
   const loaded = parseWorkflowScript(source, fileName)
   const events: WorkflowEvent[] = []
   const failures: WorkflowFailure[] = []
+  const workflowRunId = options.workflowRunId ?? `workflow-${randomUUID()}`
+  const agentEvents: AppServerNormalizedEvent[] = []
+  let agentCount = 0
+  const onAgentEvent: AppServerNormalizedEventListener = (event) => {
+    agentEvents.push(event)
+    options.onAgentEvent?.(event)
+  }
   let currentPhase: string | null = null
 
   const contextInput = options.args === undefined
@@ -686,9 +706,24 @@ export async function runWorkflowScript(
     remaining: budgetRemaining,
   }))
 
-  const runAgent = options.agent ?? options.appServer?.agent.bind(options.appServer) ?? (() => {
-    throw new Error("agent() is unavailable in the offline workflow runtime")
-  })
+  const runAgent: WorkflowAgent = options.agent ?? (options.appServer
+    ? async (prompt, rawAgentOptions) => {
+      const agentOptions = rawAgentOptions as AppServerAgentOptions | undefined
+      const agentId = `${workflowRunId}:agent-${++agentCount}`
+      const handle = await options.appServer!.startAgent(prompt, {
+        ...(agentOptions ?? {}),
+        workflowRunId,
+        agentId,
+        eventSink: onAgentEvent,
+        eventTimestamp: options.eventTimestamp,
+      })
+      options.onAgentStart?.(handle)
+      const call = await handle.result()
+      return call.result
+    }
+    : () => {
+      throw new Error("agent() is unavailable in the offline workflow runtime")
+    })
   const agent = makeSafeHostFunction(async (prompt: unknown, rawOptions?: unknown) => {
     if (typeof prompt !== "string") throw new TypeError("agent() prompt must be a string")
     let agentOptions: JSONObject | undefined
@@ -813,5 +848,5 @@ export async function runWorkflowScript(
 
   const value = await script.runInContext(context)
   const result = cloneJSONValue(value, "workflow result")
-  return { meta: loaded.meta, result, events, failures }
+  return { meta: loaded.meta, result, events, failures, workflowRunId, agentEvents }
 }

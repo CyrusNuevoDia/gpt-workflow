@@ -154,33 +154,59 @@ Evidence
 
 ## Phase 4: Stream and control live agents
 
-Status: in progress
+Status: complete
 
 Implementation
 
-- [ ] Normalize App Server lifecycle, delta, plan, reasoning, command, file,
+- [x] Normalize App Server lifecycle, delta, plan, reasoning, command, file,
   tool, collaboration, usage, and terminal events.
-- [ ] Attribute events to workflow run, agent, label, phase, model, thread, turn,
+- [x] Attribute events to workflow run, agent, label, phase, model, thread, turn,
   and item identifiers where applicable.
-- [ ] Expose orchestrator-facing steering and interruption controls.
-- [ ] Ensure interrupting one sibling does not cancel unrelated siblings.
+- [x] Expose orchestrator-facing steering and interruption controls.
+- [x] Ensure interrupting one sibling does not cancel unrelated siblings.
 
 Verification
 
-- [ ] Capture intermediate events before completion for the R9 live probe.
-- [ ] Run R10's verifier-generated nonce steer while the child turn is active.
-- [ ] Run the two-sibling isolated-interruption probe.
-- [ ] Inspect ordering and attribution in the append-only event artifact.
+- [x] Capture intermediate events before completion for the R9 live probe.
+- [x] Run R10's verifier-generated nonce steer while the child turn is active.
+- [x] Run the two-sibling isolated-interruption probe.
+- [x] Inspect ordering and attribution in the in-memory event evidence. Durable
+  append-only artifacts remain assigned to Phase 5 journaling and Phase 6 reports.
 
 Exit criteria
 
-- [ ] R9 and R10 pass with live evidence.
-- [ ] The runtime never relies on final-response buffering as a substitute for
+- [x] R9 and R10 pass with live evidence.
+- [x] The runtime never relies on final-response buffering as a substitute for
   progress streaming.
+
+Evidence
+
+- `bun scripts/verify-live.ts --phase4`: exit 0 with
+  `PHASE_4_VERDICT: PASS` after the Sol review refinements.
+- R9: 38 normalized events; message delta and command/tool progress observed by
+  `onAgentEvent` while the workflow promise was unresolved; ordered thread and
+  turn starts preceded the authoritative message completion and terminal event.
+- R9 terminal: completed Luna turn
+  `019f55ce-9aa6-7250-88bd-17278d7eea75` on thread
+  `019f55ce-949e-7e10-86a0-7ba68451fd8a`, with complete usage attached.
+- R10 steer: App Server accepted verifier nonce
+  `phase4-nonce-d5e18035-9b8d-47f8-a0e5-a273dbde83e4` for the exact active turn
+  `019f55ce-bb27-72f2-9c25-b416be9fd39e`; the runtime-managed final result
+  contained the nonce.
+- R10 sibling probe: both runtime-managed handles were exposed; the interrupted
+  sibling became a visible absorbed `parallel` failure while the other returned
+  exactly `phase4-sibling-complete` on a distinct thread.
+- Offline final: 40 tests passed, 0 failed, 130 assertions; TypeScript and
+  `git diff --check` passed.
+- Luna/xhigh implementation session: `019f55b5-5714-71d1-9047-066607059b56`.
+- Sol/high review session: `019f55c7-f393-7db2-b43e-33db4707a9e5`. It found
+  and drove fixes for post-completion-only inspection, incomplete pass
+  predicates, direct-client control bypass, missing turn attribution on early
+  events, and observer exceptions affecting sibling turns.
 
 ## Phase 5: Add composition, isolation, caps, and exact-prefix resume
 
-Status: pending
+Status: in progress
 
 Implementation
 
@@ -242,11 +268,11 @@ Exit criteria
   temporary directory.
 - Persistent `model/list` returned both `gpt-5.6-luna` and
   `gpt-5.6-terra`, with `nextCursor: null`.
-- Phase 1 added the command surface and complete 13-file Codex mirror; live
-  execution remains intentionally unimplemented at the Phase 2 boundary.
+- Phases 1-4 are complete: the 13-file mirror, deterministic Bun VM, persistent
+  App Server client, authoritative results, real-time normalized progress, and
+  runtime-managed steering/interruption all have offline and live proof.
 
 ## Next action
 
-Implement the stdio App Server client and authoritative live `agent()` result
-path for R3, R4, and R8, starting with initialization, model discovery, and one
-text/structured probe before adding steering and interruption.
+Implement Phase 5 composition, shared caps/accounting, isolated worktrees, and
+the exact-prefix journal/resume protocol, then run R7 and all three R11 legs.
