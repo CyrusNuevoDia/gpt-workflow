@@ -1,10 +1,15 @@
 import { randomUUID } from "node:crypto"
+import { readFileSync } from "node:fs"
+import { execFileSync } from "node:child_process"
+import { readFile } from "node:fs/promises"
+import { join } from "node:path"
 import { AppServerClient, REQUIRED_APP_SERVER_MODELS } from "../src/app-server.ts"
 import type { AppServerAgentHandle, AppServerNormalizedEvent } from "../src/app-server.ts"
-import { runWorkflowScript } from "../src/runtime.ts"
+import { runWorkflowScript, type WorkflowExecutionOptions } from "../src/runtime.ts"
 
 const phase3Only = process.argv.includes("--phase3")
 const phase4Only = process.argv.includes("--phase4")
+const phase5Only = process.argv.includes("--phase5")
 const lunaOnly = process.argv.includes("--luna-only")
 const terraOnly = process.argv.includes("--terra-only")
 const TEXT_WORKFLOW = `
@@ -211,7 +216,129 @@ async function runPhase4(): Promise<void> {
   }
 }
 
+async function runPhase5(): Promise<void> {
+  let client: AppServerClient | undefined
+  try {
+    const repository = process.cwd()
+    const workflowDirectory = join(repository, ".codex", "workflows")
+    const compositionPath = join(workflowDirectory, "parity-07-composition.js")
+    const worktreePath = join(workflowDirectory, "parity-09-worktree.js")
+    const resumePath = join(workflowDirectory, "parity-12-resume.js")
+    client = await AppServerClient.connect({
+      requiredModels: REQUIRED_APP_SERVER_MODELS,
+      cwd: repository,
+      clientInfo: { name: "gpt-workflow-phase5", title: "GPT Workflow Phase 5", version: "0.1.0" },
+    })
+
+    const composition = await runWorkflowScript(await readFile(compositionPath, "utf8"), {
+      appServer: client,
+      cwd: repository,
+      fileName: compositionPath,
+      workflowDirectory,
+      workflowRunId: `phase5-composition-${randomUUID()}`,
+    })
+    const worktree = await runWorkflowScript(await readFile(worktreePath, "utf8"), {
+      appServer: client,
+      cwd: repository,
+      fileName: worktreePath,
+      workflowDirectory,
+      workflowRunId: `phase5-worktree-${randomUUID()}`,
+    })
+    const worktreeListAfter = execFileSync("git", ["-C", repository, "worktree", "list", "--porcelain"], { encoding: "utf8" })
+    const cleanWorktreeRemoved = !worktreeListAfter.includes(worktree.workflowRunId)
+
+    const resumeRunId = `phase5-resume-${randomUUID()}`
+    const resumeOptions = {
+      appServer: client,
+      cwd: repository,
+      fileName: resumePath,
+      workflowDirectory,
+    } satisfies WorkflowExecutionOptions
+    const r1 = await runWorkflowScript(await readFile(resumePath, "utf8"), {
+      ...resumeOptions,
+      args: { salt: "s1" },
+      workflowRunId: resumeRunId,
+    })
+    const r2 = await runWorkflowScript(await readFile(resumePath, "utf8"), {
+      ...resumeOptions,
+      args: { salt: "s1" },
+      resumeFromRunId: resumeRunId,
+    })
+    const r3 = await runWorkflowScript(await readFile(resumePath, "utf8"), {
+      ...resumeOptions,
+      args: { salt: "s2" },
+      resumeFromRunId: resumeRunId,
+    })
+
+    const nonces = (execution: typeof r1): { a: unknown; b: unknown; c: unknown } => {
+      const result = execution.result
+      if (result === null || typeof result !== "object" || Array.isArray(result) || result.nonces === null || typeof result.nonces !== "object" || Array.isArray(result.nonces)) {
+        return { a: null, b: null, c: null }
+      }
+      return {
+        a: result.nonces.a,
+        b: result.nonces.b,
+        c: result.nonces.c,
+      }
+    }
+    const firstNonces = nonces(r1)
+    const replayNonces = nonces(r2)
+    const changedNonces = nonces(r3)
+    const journalPath = r3.journalPath
+    const journalLines = journalPath === null
+      ? []
+      : readFileSync(journalPath, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as { type: string; key: string })
+    const startedKeys = journalLines.filter((line) => line.type === "started").map((line) => line.key)
+    const resumeProof = {
+      r1: { result: r1.result, usage: r1.usage },
+      r2: { result: r2.result, usage: r2.usage },
+      r3: { result: r3.result, usage: r3.usage },
+      nonces: { r1: firstNonces, r2: replayNonces, r3: changedNonces },
+      replayByteIdentical: JSON.stringify(r1.result) === JSON.stringify(r2.result),
+      replayUsesNoLiveAgents: r2.usage.liveAgentCount === 0 && r2.usage.subagentTokens === 0 && r2.usage.replayedAgentCount === 3,
+      unchangedAReplayed: changedNonces.a === firstNonces.a,
+      changedBIsFresh: changedNonces.b !== firstNonces.b,
+      changedCIsFreshAfterMiss: changedNonces.c !== firstNonces.c,
+      journalPath,
+      journalStartedKeys: startedKeys,
+      chainedKeysObserved: startedKeys.length === 5 && new Set(startedKeys).size === 5,
+    }
+    const compositionPassed = composition.result !== null && typeof composition.result === "object" && !Array.isArray(composition.result) && composition.result.suite === "parity-07-composition" && composition.result.passed === true
+    const worktreePassed = worktree.result !== null && typeof worktree.result === "object" && !Array.isArray(worktree.result) && worktree.result.suite === "parity-09-worktree" && worktree.result.passed === true && cleanWorktreeRemoved
+    const resumePassed = r1.result !== null && typeof r1.result === "object" && !Array.isArray(r1.result) && r1.result.suite === "parity-12-resume" && r1.result.passed === true && r2.result !== null && typeof r2.result === "object" && !Array.isArray(r2.result) && r2.result.passed === true && r3.result !== null && typeof r3.result === "object" && !Array.isArray(r3.result) && r3.result.passed === true && resumeProof.replayByteIdentical && resumeProof.replayUsesNoLiveAgents && resumeProof.unchangedAReplayed && resumeProof.changedBIsFresh && resumeProof.changedCIsFreshAfterMiss && resumeProof.chainedKeysObserved
+    const passed = compositionPassed && worktreePassed && resumePassed
+    console.log(json({
+      phase: "5",
+      readiness: {
+        codexVersion: client.initializeResult.userAgent,
+        models: client.discoveredModels.map((model) => model.id),
+        modelListPages: client.modelListPages,
+      },
+      probes: {
+        composition: { result: composition.result, usage: composition.usage, journalPath: composition.journalPath },
+        worktree: { result: worktree.result, usage: worktree.usage, journalPath: worktree.journalPath, cleanWorktreeRemoved },
+        resume: resumeProof,
+      },
+      laterPhases: "R12-R15 remain intentionally incomplete; this is the Phase 5 parent probe only.",
+    }))
+    console.log(`PHASE_5_VERDICT: ${passed ? "PASS" : "FAIL"}`)
+    if (!passed) process.exitCode = 1
+  } catch (error) {
+    console.error(`Phase 5 live verification failed: ${error instanceof Error ? error.message : String(error)}`)
+    process.exitCode = 1
+  } finally {
+    await client?.close().catch((error: unknown) => {
+      console.error(`Phase 5 App Server shutdown failed: ${error instanceof Error ? error.message : String(error)}`)
+      process.exitCode = 1
+    })
+  }
+}
+
 async function main(): Promise<void> {
+  if (phase5Only) {
+    await runPhase5()
+    return
+  }
   if (phase4Only) {
     await runPhase4()
     return

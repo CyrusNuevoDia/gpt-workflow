@@ -208,6 +208,7 @@ export interface AppServerInitializeResult {
 export interface AppServerAgentOptions {
   model?: string
   cwd?: string
+  isolation?: "worktree"
   effort?: string
   schema?: AppServerJSONObject
   label?: string

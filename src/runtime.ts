@@ -1,12 +1,24 @@
 import * as vm from "node:vm"
 import { randomUUID } from "node:crypto"
+import { readdir, readFile } from "node:fs/promises"
+import { dirname, isAbsolute, resolve } from "node:path"
 import type {
   AppServerAgentOptions,
   AppServerAgentHandle,
+  AppServerJSONValue,
   AppServerClient,
   AppServerNormalizedEvent,
   AppServerNormalizedEventListener,
 } from "./app-server.ts"
+import { WorkflowJournal } from "./workflow-journal.ts"
+import {
+  resolveWorkflowCaps,
+  WorkflowCanceledError,
+  WorkflowRunState,
+  type WorkflowCapOptions,
+  type WorkflowUsage,
+} from "./workflow-state.ts"
+import { createWorkflowWorktree, type WorkflowWorktree } from "./worktree.ts"
 
 export type JSONPrimitive = string | number | boolean | null
 export type JSONValue = JSONPrimitive | JSONArray | JSONObject
@@ -73,7 +85,13 @@ export interface WorkflowExecutionOptions {
   agent?: WorkflowAgent
   appServer?: AppServerClient
   workflow?: WorkflowChild
+  workflowDirectory?: string
+  cwd?: string
   budget?: OfflineBudgetOptions
+  caps?: WorkflowCapOptions
+  signal?: AbortSignal
+  transcriptDirectory?: string
+  resumeFromRunId?: string
   fileName?: string
   workflowRunId?: string
   eventTimestamp?: () => number
@@ -88,16 +106,14 @@ export interface WorkflowExecution {
   failures: WorkflowFailure[]
   workflowRunId: string
   agentEvents: AppServerNormalizedEvent[]
+  usage: WorkflowUsage
+  journalPath: string | null
 }
 
-const MAX_BOUNDARY_ITEMS = 4096
 const DATE_ERROR =
   "Date.now() / new Date() are unavailable in workflow scripts (breaks resume). Stamp results after the workflow returns, or pass timestamps via args."
 const RANDOM_ERROR =
   "Math.random() is unavailable in workflow scripts (breaks resume). For N independent samples, include the index in the agent label or prompt."
-const CAP_ERROR =
-  "exceeds the maximum of 4096 supported across the workflow VM boundary"
-
 export class WorkflowLoadError extends Error {
   constructor(message: string) {
     super(message)
@@ -642,26 +658,90 @@ const VM_SETUP = `
 })()
 `
 
+interface WorkflowRunContext {
+  readonly state: WorkflowRunState
+  readonly journal: WorkflowJournal | null
+  readonly resumeEnabled: boolean
+  readonly workflowDirectory: string
+  readonly rootOptions: WorkflowExecutionOptions
+  readonly agentEvents: AppServerNormalizedEvent[]
+  readonly onAgentEvent: AppServerNormalizedEventListener
+  replayIndex: number
+  replayMissed: boolean
+}
+
+interface InternalWorkflowExecution {
+  meta: WorkflowMeta
+  result: JSONValue
+  events: WorkflowEvent[]
+  failures: WorkflowFailure[]
+}
+
+const NESTING_ERROR =
+  "workflow() cannot be called from within a child workflow — nesting is limited to one level. Inline the inner script or call its agents directly."
+
 export async function runWorkflowScript(
   source: string,
   options: WorkflowExecutionOptions = {},
 ): Promise<WorkflowExecution> {
   const fileName = options.fileName ?? "workflow.js"
   const loaded = parseWorkflowScript(source, fileName)
+  const workflowRunId = options.resumeFromRunId ?? options.workflowRunId ?? `workflow-${randomUUID()}`
+  const budgetTotal = options.budget?.total ?? null
+  if (budgetTotal !== null && (!Number.isFinite(budgetTotal) || budgetTotal < 0)) {
+    throw new TypeError("budget.total must be null or a finite non-negative number")
+  }
+  const state = new WorkflowRunState({
+    workflowRunId,
+    caps: resolveWorkflowCaps(options.caps),
+    budgetTotal,
+    spentSource: options.budget?.spent ?? 0,
+    signal: options.signal,
+  })
+  const transcriptDirectory = options.transcriptDirectory
+    ?? (options.appServer !== undefined || options.resumeFromRunId !== undefined
+      ? resolve(process.cwd(), ".verification-artifacts", "workflows", workflowRunId)
+      : null)
+  const journal = transcriptDirectory === null ? null : await WorkflowJournal.open(transcriptDirectory)
+  const agentEvents: AppServerNormalizedEvent[] = []
+  const context: WorkflowRunContext = {
+    state,
+    journal,
+    resumeEnabled: options.resumeFromRunId !== undefined,
+    workflowDirectory: options.workflowDirectory ?? resolve(process.cwd(), ".codex", "workflows"),
+    rootOptions: options,
+    agentEvents,
+    onAgentEvent: (event) => {
+      agentEvents.push(event)
+      options.onAgentEvent?.(event)
+    },
+    replayIndex: 0,
+    replayMissed: false,
+  }
+  const execution = await executeWorkflow(loaded, options.args, fileName, 0, context)
+  return {
+    ...execution,
+    workflowRunId,
+    agentEvents,
+    usage: state.usage,
+    journalPath: journal?.path ?? null,
+  }
+}
+
+async function executeWorkflow(
+  loaded: LoadedWorkflowScript,
+  input: JSONValue | undefined,
+  fileName: string,
+  depth: number,
+  runContext: WorkflowRunContext,
+): Promise<InternalWorkflowExecution> {
   const events: WorkflowEvent[] = []
   const failures: WorkflowFailure[] = []
-  const workflowRunId = options.workflowRunId ?? `workflow-${randomUUID()}`
-  const agentEvents: AppServerNormalizedEvent[] = []
-  let agentCount = 0
-  const onAgentEvent: AppServerNormalizedEventListener = (event) => {
-    agentEvents.push(event)
-    options.onAgentEvent?.(event)
-  }
   let currentPhase: string | null = null
+  const options = runContext.rootOptions
+  const { state } = runContext
 
-  const contextInput = options.args === undefined
-    ? undefined
-    : JSON.stringify(cloneJSONValue(options.args, "args"))
+  const contextInput = input === undefined ? undefined : JSON.stringify(cloneJSONValue(input, "args"))
   const context = vm.createContext({ __workflowInputJSON: contextInput })
   vm.runInContext(VM_SETUP, context, { filename: `${fileName}:setup` })
   const createError = vm.runInContext("(message) => new Error(message)", context) as (message: string) => unknown
@@ -678,59 +758,88 @@ export async function runWorkflowScript(
   }
 
   const contextRecord = context as unknown as Record<string, unknown>
-  contextRecord.args = options.args === undefined
-    ? undefined
-    : vm.runInContext("JSON.parse(__workflowInputJSON)", context)
+  contextRecord.args = input === undefined ? undefined : vm.runInContext("JSON.parse(__workflowInputJSON)", context)
   delete contextRecord.__workflowInputJSON
 
-  const budgetTotal = options.budget?.total ?? null
-  if (budgetTotal !== null && (!Number.isFinite(budgetTotal) || budgetTotal < 0)) {
-    throw new TypeError("budget.total must be null or a finite non-negative number")
-  }
-  const spentSource = options.budget?.spent ?? 0
-  const readSpent = (): number => {
-    const spent = typeof spentSource === "function" ? spentSource() : spentSource
-    if (!Number.isFinite(spent) || spent < 0) {
-      throw new TypeError("budget.spent() must return a finite non-negative number")
-    }
-    return spent
-  }
-  const budgetSpent = makeSafeHostFunction(() => readSpent(), createError)
-  const budgetRemaining = makeSafeHostFunction(
-    () => budgetTotal === null ? Infinity : Math.max(0, budgetTotal - readSpent()),
-    createError,
-  )
+  const budgetSpent = makeSafeHostFunction(() => state.budget.spent(), createError)
+  const budgetRemaining = makeSafeHostFunction(() => state.budget.remaining(), createError)
   const budget = Object.freeze(Object.assign(Object.create(null), {
-    total: budgetTotal,
+    total: state.budget.total,
     spent: budgetSpent,
     remaining: budgetRemaining,
   }))
 
-  const runAgent: WorkflowAgent = options.agent ?? (options.appServer
-    ? async (prompt, rawAgentOptions) => {
-      const agentOptions = rawAgentOptions as AppServerAgentOptions | undefined
-      const agentId = `${workflowRunId}:agent-${++agentCount}`
-      const handle = await options.appServer!.startAgent(prompt, {
+  const runLiveAgent = async (prompt: string, agentOptions: JSONObject | undefined, agentId: string): Promise<JSONValue> => {
+    state.budget.assertAvailable()
+    const requestedCwd = typeof agentOptions?.cwd === "string"
+      ? agentOptions.cwd
+      : options.cwd ?? process.cwd()
+    const isolation = agentOptions?.isolation === "worktree"
+    let worktree: WorkflowWorktree | null = null
+    try {
+      if (isolation) worktree = await createWorkflowWorktree(requestedCwd, state.workflowRunId, state.nextWorktreeNumber())
+      const callOptions = {
         ...(agentOptions ?? {}),
-        workflowRunId,
+        ...(isolation ? { sandbox: "workspace-write" } : {}),
+        ...(worktree === null && options.cwd === undefined ? {} : { cwd: worktree?.path ?? requestedCwd }),
+      } satisfies JSONObject
+      state.markLiveAgent()
+      if (options.agent) {
+        return await waitForCancellation(Promise.resolve(options.agent(prompt, callOptions)), state.signal)
+      }
+      if (!options.appServer) throw new Error("agent() is unavailable in the offline workflow runtime")
+      const handle = await options.appServer.startAgent(prompt, {
+        ...(callOptions as unknown as AppServerAgentOptions),
+        workflowRunId: state.workflowRunId,
         agentId,
-        eventSink: onAgentEvent,
+        eventSink: runContext.onAgentEvent,
         eventTimestamp: options.eventTimestamp,
       })
-      options.onAgentStart?.(handle)
-      const call = await handle.result()
-      return call.result
+      const unregister = state.registerHandle(handle)
+      try {
+        options.onAgentStart?.(handle)
+        const call = await waitForCancellation(handle.result(), state.signal)
+        state.budget.recordTokens(extractUsageTokens(call.evidence.usage))
+        return call.result
+      } finally {
+        unregister()
+      }
+    } finally {
+      await worktree?.cleanup()
     }
-    : () => {
-      throw new Error("agent() is unavailable in the offline workflow runtime")
+  }
+
+  const runAgent: WorkflowAgent = async (prompt, agentOptions) => {
+    const agentId = state.reserveAgent()
+    const key = runContext.journal?.keyFor(state.currentCallChain, prompt, agentOptions) ?? null
+    state.currentCallChain = key ?? state.currentCallChain
+    const replayIndex = runContext.replayIndex++
+    const replay = runContext.resumeEnabled && !runContext.replayMissed && key !== null
+      ? runContext.journal?.replay(replayIndex, key) ?? null
+      : null
+    if (replay !== null) {
+      state.markReplayedAgent()
+      return cloneJSONValue(replay.result, "replayed agent result")
+    }
+    if (runContext.resumeEnabled && key !== null) runContext.replayMissed = true
+    const started = key === null || runContext.journal === null
+      ? Promise.resolve()
+      : runContext.journal.appendStarted({ key, agentId })
+    return state.scheduleAgent(async () => {
+      await started
+      const result = await runLiveAgent(prompt, agentOptions, agentId)
+      if (key !== null && runContext.journal !== null) {
+        await runContext.journal.appendResult({ key, agentId, result: cloneJSONValue(result, "agent result") })
+      }
+      return result
     })
+  }
+
   const agent = makeSafeHostFunction(async (prompt: unknown, rawOptions?: unknown) => {
     if (typeof prompt !== "string") throw new TypeError("agent() prompt must be a string")
     let agentOptions: JSONObject | undefined
     if (rawOptions !== undefined) {
-      if (!isPlainJSONObject(rawOptions)) {
-        throw new TypeError("agent() options must be a plain object")
-      }
+      if (!isPlainJSONObject(rawOptions)) throw new TypeError("agent() options must be a plain object")
       agentOptions = cloneJSONValue(rawOptions, "agent options") as JSONObject
     }
     if (agentOptions === undefined && currentPhase !== null) {
@@ -742,9 +851,14 @@ export async function runWorkflowScript(
     return marshal(result, "agent result")
   }, createError)
 
-  const runWorkflow = options.workflow ?? (() => {
-    throw new Error("workflow() is unavailable in the offline workflow runtime")
-  })
+  const runWorkflow = async (reference: WorkflowReference, childArgs: JSONValue | undefined): Promise<JSONValue> => {
+    if (depth >= state.caps.maxWorkflowDepth) throw new Error(NESTING_ERROR)
+    if (options.workflow) return options.workflow(reference, childArgs)
+    const child = await loadReferencedWorkflow(reference, fileName, runContext.workflowDirectory)
+    const childExecution = await executeWorkflow(child.loaded, childArgs, child.fileName, depth + 1, runContext)
+    failures.push(...childExecution.failures)
+    return childExecution.result
+  }
   const workflow = makeSafeHostFunction(async (rawReference: unknown, rawArgs?: unknown) => {
     if (typeof rawReference !== "string" && !isPlainJSONObject(rawReference)) {
       throw new TypeError("workflow() reference must be a name or { scriptPath } object")
@@ -754,8 +868,7 @@ export async function runWorkflowScript(
     }
     const reference = cloneJSONValue(rawReference, "workflow reference") as WorkflowReference
     const childArgs = rawArgs === undefined ? undefined : cloneJSONValue(rawArgs, "workflow args")
-    const result = await runWorkflow(reference, childArgs)
-    return marshal(result, "workflow result")
+    return marshal(await runWorkflow(reference, childArgs), "workflow result")
   }, createError)
 
   const phase = makeSafeHostFunction((title: unknown) => {
@@ -772,8 +885,8 @@ export async function runWorkflowScript(
 
   const assertCollection = (name: string, value: unknown): value is unknown[] => {
     if (!Array.isArray(value)) throw new TypeError(`${name}() requires an array`)
-    if (value.length > MAX_BOUNDARY_ITEMS) {
-      throw new RangeError(`array length ${value.length} ${CAP_ERROR}`)
+    if (value.length > state.caps.maxBoundaryItems) {
+      throw new RangeError(`array length ${value.length} exceeds the maximum of ${state.caps.maxBoundaryItems} supported across the workflow VM boundary`)
     }
     return true
   }
@@ -838,15 +951,67 @@ export async function runWorkflowScript(
 
   let script: vm.Script
   try {
-    script = new vm.Script(
-      `(async function __workflowBody() {\n"use strict";\n${loaded.body}\n})()`,
-      { filename: fileName },
-    )
+    script = new vm.Script(`(async function __workflowBody() {\n"use strict";\n${loaded.body}\n})()`, { filename: fileName })
   } catch (error) {
     throw new WorkflowLoadError(`${fileName}: ${describeError(error)}`)
   }
 
   const value = await script.runInContext(context)
-  const result = cloneJSONValue(value, "workflow result")
-  return { meta: loaded.meta, result, events, failures, workflowRunId, agentEvents }
+  return { meta: loaded.meta, result: cloneJSONValue(value, "workflow result"), events, failures }
+}
+
+async function loadReferencedWorkflow(
+  reference: WorkflowReference,
+  currentFileName: string,
+  workflowDirectory: string,
+): Promise<{ loaded: LoadedWorkflowScript; fileName: string }> {
+  if (typeof reference === "string") {
+    const names = (await readdir(workflowDirectory, { withFileTypes: true }).catch(() => []))
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
+      .map((entry) => entry.name)
+      .sort()
+    const available: string[] = []
+    for (const name of names) {
+      const fileName = resolve(workflowDirectory, name)
+      const loaded = parseWorkflowScript(await readFile(fileName, "utf8"), fileName)
+      available.push(loaded.meta.name)
+      if (loaded.meta.name === reference) return { loaded, fileName }
+    }
+    throw new Error(`workflow(${JSON.stringify(reference)}): no workflow with that name. Available: ${available.join(", ")}`)
+  }
+  const fileName = isAbsolute(reference.scriptPath)
+    ? reference.scriptPath
+    : resolve(dirname(currentFileName), reference.scriptPath)
+  return { loaded: parseWorkflowScript(await readFile(fileName, "utf8"), fileName), fileName }
+}
+
+async function waitForCancellation<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) throw new WorkflowCanceledError()
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new WorkflowCanceledError())
+    signal.addEventListener("abort", onAbort, { once: true })
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort)
+        resolve(value)
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort)
+        reject(error)
+      },
+    )
+  })
+}
+
+function extractUsageTokens(usage: AppServerJSONValue | null | undefined): number {
+  if (usage === null || usage === undefined || typeof usage !== "object") return 0
+  if (Array.isArray(usage)) return 0
+  const direct = usage.totalTokens
+  if (typeof direct === "number" && Number.isFinite(direct) && direct >= 0) return direct
+  const total = usage.total
+  if (total !== null && typeof total === "object" && !Array.isArray(total)) {
+    const tokens = total.totalTokens
+    if (typeof tokens === "number" && Number.isFinite(tokens) && tokens >= 0) return tokens
+  }
+  return 0
 }

@@ -206,33 +206,56 @@ Evidence
 
 ## Phase 5: Add composition, isolation, caps, and exact-prefix resume
 
-Status: in progress
+Status: complete
 
 Implementation
 
-- [ ] Implement child workflow resolution, args/result propagation, shared
+- [x] Implement child workflow resolution, args/result propagation, shared
   lifecycle accounting, and the one-level nesting boundary.
-- [ ] Implement worktree isolation and cleanup without touching the main tree.
-- [ ] Enforce concurrency, lifetime, nesting, and boundary caps visibly.
-- [ ] Implement append-only journaling with chained keys and longest-prefix
+- [x] Implement worktree isolation and cleanup without touching the main tree.
+- [x] Enforce concurrency, lifetime, nesting, and boundary caps visibly.
+- [x] Implement append-only journaling with chained keys and longest-prefix
   replay.
-- [ ] Allow the same completed run to be resumed repeatedly.
+- [x] Allow the same completed run to be resumed repeatedly.
 
 Verification
 
-- [ ] Run all R7 composition, isolation, and cap checks.
-- [ ] Run `parity-12-resume` legs R1, R2, and R3 and compare A/B/C nonces,
+- [x] Run all R7 composition, isolation, and cap checks.
+- [x] Run `parity-12-resume` legs R1, R2, and R3 and compare A/B/C nonces,
   tokens, duration, and journal keys.
-- [ ] Run the negative control proving a per-`(prompt, opts)` cache fails.
+- [x] Run the negative control proving a per-`(prompt, opts)` cache fails.
 
 Exit criteria
 
-- [ ] R7 and R11 pass.
-- [ ] R3's changed B invalidates C even though C's prompt and options match R1.
+- [x] R7 and R11 pass.
+- [x] R3's changed B invalidates C even though C's prompt and options match R1.
+
+Evidence
+
+- `bun scripts/verify-live.ts --phase5`: exit 0 with
+  `PHASE_5_VERDICT: PASS`.
+- Composition: `parity-07-composition` passed 6/6, including verbatim child
+  args/result, name and path resolution, catchable unknown names, and the exact
+  one-level nesting error; parent and child shared run state and agent IDs.
+- Isolation: `parity-09-worktree` passed 4/4. The isolated writer ran under a
+  distinct `.verification-artifacts/worktrees/...` git toplevel with a writable
+  sandbox; the main checkout never saw its marker; the clean worktree was absent
+  from `git worktree list` after completion.
+- Resume R1 (`s1`): 3 live agents, nonces A/B/C =
+  `a80de2fe5b92a134` / `a47aec9fb367d565` / `03a9caab48dfdabf`.
+- Resume R2 (`s1` from R1): byte-identical result, the same three nonces,
+  3 replayed agents, 0 live agents, and 0 subagent tokens.
+- Resume R3 (`s2` from R1): A replayed unchanged; B and C were fresh
+  (`1468ef75c74adbd8` / `5950debe177baac6`), proving the miss invalidated the
+  remaining prefix. The append-only journal held five distinct chained start
+  keys and supported both resumes of the completed R1 run.
+- Offline final: 47 tests passed, 0 failed, 162 assertions after parent live
+  fixes; TypeScript, mirror 13/13, and `git diff --check` passed.
+- Luna/xhigh implementation session: `019f55d0-3da7-7381-aac5-e4c0e5027181`.
 
 ## Phase 6: Close the complete live parity sweep
 
-Status: pending
+Status: in progress
 
 Implementation
 
@@ -274,5 +297,6 @@ Exit criteria
 
 ## Next action
 
-Implement Phase 5 composition, shared caps/accounting, isolated worktrees, and
-the exact-prefix journal/resume protocol, then run R7 and all three R11 legs.
+Implement the complete 16-invocation live sweep, durable report/event artifacts,
+negative verifier controls, root `BRIEF.html`, browser review, and final R1-R15
+verdict.
