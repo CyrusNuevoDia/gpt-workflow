@@ -6,18 +6,22 @@
 // must throw -> nestedThrew=true, proving the one-level nesting limit is
 // catchable in the child script rather than killing the run.
 export const meta = {
-  name: 'parity-07b-nested-probe',
-  description: 'Nesting probe: calls workflow() and reports whether it threw (one-level nesting limit)',
-  phases: [{ title: 'Probe' }],
-}
+  description:
+    "Nesting probe: calls workflow() and reports whether it threw (one-level nesting limit)",
+  name: "parity-07b-nested-probe",
+  phases: [{ title: "Probe" }]
+};
 
-phase('Probe')
+phase("Probe");
 try {
-  const child = await workflow({ scriptPath: '/Users/knrz/Git/CyrusNuevoDia/gpt-workflow/.claude/workflows/parity-05-args.js' })
-  log('inner workflow() succeeded — running at top level')
-  return { suite: 'parity-07b-nested-probe', nestedThrew: false, childSuite: (child && child.suite) || null }
+  const child = await workflow({
+    scriptPath:
+      "/Users/knrz/Git/CyrusNuevoDia/gpt-workflow/.claude/workflows/parity-05-args.js"
+  });
+  log("inner workflow() succeeded — running at top level");
+  return { childSuite: (child && child.suite) || null, nestedThrew: false, suite: 'parity-07b-nested-probe' }
 } catch (e) {
-  const message = String((e && e.message) || e)
-  log('inner workflow() threw — running as a child: ' + message)
-  return { suite: 'parity-07b-nested-probe', nestedThrew: true, message }
+  const message = String((e && e.message) || e);
+  log("inner workflow() threw — running as a child: " + message);
+  return { message, nestedThrew: true, suite: 'parity-07b-nested-probe' }
 }
