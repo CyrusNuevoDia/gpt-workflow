@@ -1,30 +1,21 @@
-# Workflow SDK documentation
+# gpt-workflow documentation
 
-Read in order the first time; each doc stands alone for reference afterwards.
+These docs describe the implemented Codex runtime and public npm package.
 
-1. **[Getting started](01-getting-started.md)** — the mental model, your first
-   workflow, running it through the installed library, reading results,
-   iterating.
-2. **[Script format](02-script-format.md)** — anatomy of a workflow script: the
-   `meta` block, the language sandbox, determinism rules, return values.
-3. **[API reference](03-api.md)** — every global available to a script:
-   `agent()`, `parallel()`, `pipeline()`, `phase()`, `log()`, `workflow()`,
-   `args`, `budget`. Signatures, options, failure semantics, examples.
-4. **[Runtime semantics](04-runtime.md)** — the execution model: concurrency,
-   caps, background tasks, transcripts, the journal, resume/memoization,
-   worktree isolation, the failure model.
-5. **[Orchestration patterns](05-patterns.md)** — the cookbook: pipeline vs
-   barrier, the three loop shapes, adversarial verification, judge panels,
-   sweeps, critics, and how to compose them.
-6. **[Errors and limits](06-errors-and-limits.md)** — every error the runtime
-   throws (exact messages), every cap, and the recovery playbook.
+1. [Getting started](01-getting-started.md) — install, author, run, resume, and
+   install the Codex plugin.
+2. [Workflow scripts](02-script-format.md) — metadata, deterministic JavaScript,
+   inputs, and JSON boundaries.
+3. [API reference](03-api.md) — package exports, execution options, and script
+   globals.
+4. [Runs and journals](04-runtime.md) — run storage, record format, streaming
+   parsing, replay, scheduling, and Codex thread persistence.
+5. [Patterns](05-patterns.md) — practical orchestration shapes.
+6. [Errors and limits](06-errors-and-limits.md) — caps, failure semantics, and
+   troubleshooting.
+7. [Codex plugin](07-plugin.md) — repository marketplace installation and the
+   bundled skill.
 
-Conventions used throughout:
-
-- **Pinned by: `parity-NN`** marks a behavior asserted by a workflow in
-  [`.claude/workflows/`](../.claude/workflows/) and covered by this runtime's
-  mirrored fixtures and tests.
-- *(observed)* marks details recorded from live runs that the script-language
-  contract leaves open.
-- "Orchestrator script" = your JavaScript. "Subagent" = the LLM agent an
-  `agent()` call spawns. "Run" = one invocation of a workflow.
+The original Claude workflow material used to establish parity is preserved
+separately under [`.claude/workflows/docs/`](../.claude/workflows/docs/). It is
+reference evidence, not the contract for this package.

@@ -1,76 +1,109 @@
 # Getting started
 
-## The mental model
+`gpt-workflow` runs deterministic JavaScript orchestration on top of Codex App
+Server. Your script owns control flow; `agent()` delegates bounded judgment to
+Codex threads.
 
-A workflow is a JavaScript script that orchestrates LLM subagents. The split of
-responsibilities is the whole idea:
+## Requirements and installation
 
-- **Control flow lives in code.** Loops, conditionals, fan-out, dedup, majority
-  votes, early exits — deterministic JavaScript you can read, test, and resume.
-- **Judgment lives in agents.** Each `agent()` call spawns a real subagent (with
-  tool access — Bash, file reads, search) that does one well-scoped piece of
-  thinking and returns data.
+Use Node.js 24 or newer, Bun for the executable, and an installed authenticated
+Codex CLI for live runs.
 
-Compare the alternatives. A single agent given a big task makes its own plan and
-you get whatever it decided to do. A workflow inverts that: *you* decide there
-will be one finder, three adversarial verifiers, and a majority vote — the model
-only fills in the judgment inside each box. That structure is what makes
-multi-agent work **comprehensive** (decompose and cover in parallel),
-**confident** (independent perspectives before committing), and **scalable**
-(work no single context window can hold).
+```sh
+bun add --global gpt-workflow
+```
 
-Reach for a workflow when the orchestration itself should be deterministic.
-Stay with a single agent call when one context can hold the task.
+For library use:
 
-## Your first workflow
+```sh
+bun add gpt-workflow
+```
 
-A script has two parts: a `meta` block (static description) and a body (plain
-JavaScript, running in an async context — top-level `await` works).
+## Write a workflow
+
+Store project workflows under `.codex/workflows/`:
 
 ```js
 export const meta = {
-  name: 'summarize-and-merge',
-  description: 'Summarize three files in parallel, then merge into one brief',
-  phases: [
-    { title: 'Summarize', detail: 'one agent per file' },
-    { title: 'Merge', detail: 'combine into one brief' },
-  ],
+  name: "summarize-files",
+  description: "Summarize files concurrently and merge the findings"
 }
 
-const files = ['src/parser.ts', 'src/emitter.ts', 'src/cache.ts']
-
-phase('Summarize')
-const summaries = await parallel(files.map(f => () =>
-  agent(
-    'Read ' + f + ' and summarize what it does in 3 bullets. Return only the bullets.',
-    { model: 'haiku', label: 'summarize:' + f, phase: 'Summarize' },
+const files = args.files
+const summaries = await parallel(
+  files.map((file) => () =>
+    agent(`Read ${file} and return three factual bullets.`, {
+      label: `summarize:${file}`,
+      model: "gpt-5.6-luna"
+    })
   )
-))
-
-phase('Merge')
-const brief = await agent(
-  'Merge these file summaries into one short architecture brief:\n\n' +
-  summaries.filter(Boolean).join('\n\n'),
-  { model: 'sonnet', label: 'merge', phase: 'Merge' },
 )
 
-return { brief, filesCovered: summaries.filter(Boolean).length }
+return { summaries: summaries.filter(Boolean) }
 ```
 
-Everything characteristic is already here:
+Workflow source is trusted repository code executed in a `node:vm` semantic
+boundary. It is not a security sandbox for hostile JavaScript.
 
-- `meta` names the workflow and pre-declares progress phases (pure literal —
-  no computed values; see [Script format](02-script-format.md)).
-- `parallel()` takes **thunks** (`() => promise`), runs them concurrently, and
-  waits for all of them — a barrier.
-- Each `agent()` call pins a `model`, a display `label`, and a `phase` group.
-- A failed agent yields `null`, so `.filter(Boolean)` before consuming results.
-- The script's `return` value **is** the run's result.
+## Run and inspect it
 
-## Running a workflow
+```sh
+gpt-workflow run .codex/workflows/summarize-files.js
+```
 
-Put the workflow above in a string named `source`. Connect one App Server
-client, pass it to each run, and close it when the application is done:
+Stdout is ordered NDJSON. Every record includes `schemaVersion`, `sequence`,
+`runId`, `scriptPath`, `runDirectory`, and `type`. Human diagnostics go to
+stderr.
+
+The terminal `run.completed` record contains `result`, `usage`, `failures`, and
+`journalPath`. The journal lives at:
+
+```text
+.codex/workflows/runs/<runId>/journal.jsonl
+```
+
+Capture the stream without corrupting it:
+
+```sh
+gpt-workflow run .codex/workflows/summarize-files.js | tee run.jsonl
+jq -r 'select(.type == "run.completed") | .journalPath' run.jsonl
+```
+
+## Resume a run
+
+Reuse the `runId` from the original stream:
+
+```sh
+gpt-workflow run --resume workflow-123 .codex/workflows/summarize-files.js
+```
+
+Resume reads the same journal and replays the longest unchanged prefix of
+completed `agent()` calls. The first changed or missing call and all later calls
+run live and append new records to the same journal.
+
+## Parse large journals
+
+`parseWorkflowJournalEntry` parses exactly one JSONL record. Pair it with a
+streaming line reader so memory use stays independent of journal size:
+
+```js
+import { createReadStream } from "node:fs"
+import { createInterface } from "node:readline"
+import { parseWorkflowJournalEntry } from "gpt-workflow"
+
+const lines = createInterface({
+  input: createReadStream(journalPath),
+  crlfDelay: Infinity
+})
+
+for await (const line of lines) {
+  if (line.trim() === "") continue
+  const entry = parseWorkflowJournalEntry(line)
+  if (entry.type === "result") console.log(entry.agentId, entry.result)
+}
+```
+
+## Use the library
 
 ```js
 import {
@@ -86,93 +119,19 @@ const client = await AppServerClient.connect({
 try {
   const execution = await runWorkflowScript(source, {
     appServer: client,
-    args: { files: ["src/parser.ts", "src/emitter.ts", "src/cache.ts"] },
-    onAgentEvent: (event) => console.log(event)
+    args: { files: ["src/a.ts", "src/b.ts"] }
   })
-  console.log(execution.result)
+  console.log(execution.result, execution.journalPath)
 } finally {
   await client.close()
 }
 ```
 
-`runWorkflowScript()` resolves when the run finishes. `onAgentEvent` receives
-attributable progress while agents are active. To load a workflow from disk,
-read the JavaScript source and pass it to the same function; `fileName` can
-preserve the source name in load errors.
+Live library runs use the same default run path. Override `runDirectory` only
+when the caller owns a different storage layout.
 
-## Reading the result
+## Install the Codex plugin
 
-When the returned promise resolves, `WorkflowExecution` contains:
-
-- **`result`** — whatever the script returned, JSON-serialized.
-- **`failures`** — one line per failed slot, e.g.
-  `parallel[2] failed: intentional thunk failure`. Failures that the script
-  absorbed (null slots) do **not** fail the run. Pinned by: `parity-03`.
-- **`usage`** — agent counts and model token usage.
-- **`events`** and **`agentEvents`** — script and App Server lifecycle evidence.
-- **`workflowRunId`** and **`journalPath`** — identifiers for replay and
-  inspection.
-
-If the result looks empty or wrong, read `journal.jsonl` in the transcript
-directory **before** re-running — it records each agent's actual return value
-(see [Runtime semantics](04-runtime.md#transcripts-and-the-journal)).
-
-## Iterating on a workflow
-
-The edit loop the runtime is designed around:
-
-1. Run the source and keep `execution.workflowRunId`.
-2. Edit the source.
-3. Run it again with `resumeFromRunId: execution.workflowRunId` and the same
-   transcript location.
-
-Resume replays the longest unchanged **prefix** of `agent()` calls from cache —
-same prompt and options ⇒ cached result, instantly and for free; the first
-edited call and everything after runs live, *even calls that are themselves
-unchanged*. An unchanged script resumed in full is a 100% cache hit: the
-reference runtime replayed a 3-agent workflow in 5ms with 0 subagent tokens.
-Pinned by: `parity-12`.
-
-This is also why scripts ban wall clocks and randomness — see
-[Script format](02-script-format.md#determinism-rules).
-
-## Parameterizing with `args`
-
-The `args` input surfaces in the script as a global, **verbatim**:
-
-```js
-const execution = await runWorkflowScript(source, {
-  appServer: client,
-  args: { repo: "web", files: ["a.ts", "b.ts"] }
-})
-```
-
-Inside the workflow source, `args` is the same JSON-compatible value:
-
-```js
-const targets = args.files.map(f => args.repo + '/' + f)   // real array — .map works
-```
-
-Two sharp edges, both verified live (Pinned by: `parity-05`):
-
-- Omit `args` and the global is `undefined` — branch on that for defaults.
-- **Verbatim cuts both ways.** Args passed from *inside* a script
-  (`workflow(ref, args)`) arrive as real objects. Args crossing a tool-call
-  boundary may arrive as a JSON-encoded **string** if the caller's encoding
-  stringifies them — the runtime never parses. Defensive pattern:
-
-```js
-const input = typeof args === 'string' ? JSON.parse(args) : (args || {})
-```
-
-## Controlling launch authority
-
-The library does not decide who may start a workflow. Applications should gate
-multi-agent execution explicitly: workflows can spawn dozens of agents and
-spend model tokens, so the user should opt into that scale.
-
-## Where to next
-
-- The full contract for every global: [API reference](03-api.md).
-- How runs execute, cache, and fail: [Runtime semantics](04-runtime.md).
-- Ready-made orchestration shapes: [Patterns](05-patterns.md).
+This repository is also a Codex plugin. Add its marketplace, install
+`gpt-workflow`, restart the ChatGPT desktop app, and start a new task so the
+bundled skill is loaded. See [Codex plugin](07-plugin.md) for the exact commands.

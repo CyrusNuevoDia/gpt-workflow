@@ -1,88 +1,84 @@
 # gpt-workflow
 
 A deterministic multi-agent workflow runtime powered by Codex App Server.
-Workflow scripts keep control flow in JavaScript and delegate judgment to LLM
-agents through `agent()`, `parallel()`, `pipeline()`, and `workflow()`.
+Workflow scripts keep control flow in JavaScript and delegate judgment through
+`agent()`, `parallel()`, `pipeline()`, and `workflow()`.
 
 ## Install
 
-The library requires Node.js 24 or newer. The `gpt-workflow` executable requires
-Bun. A live agent run also requires an installed, authenticated Codex CLI.
-
-Install the CLI globally with Bun:
+Use Node.js 24 or newer, Bun for the executable, and an installed authenticated
+Codex CLI for live runs.
 
 ```sh
 bun add --global gpt-workflow
 ```
 
-Install the library in a project with Bun:
+For library use:
 
 ```sh
 bun add gpt-workflow
 ```
 
-Contributors working from a source checkout can install its dependencies with:
+## Run and resume
 
 ```sh
-bun install
+gpt-workflow run .codex/workflows/my-workflow.js
+gpt-workflow run --resume workflow-123 .codex/workflows/my-workflow.js
 ```
 
-## Run a workflow
-
-```sh
-gpt-workflow run path/to/workflow.js
-```
-
-During a run, stdout is strict newline-delimited JSON. Each line is a complete
-record with `schemaVersion`, `sequence`, `runId`, `scriptPath`,
-`transcriptDirectory`, and `type`. Records arrive in order as the run changes:
+Stdout is ordered NDJSON; human diagnostics go to stderr. Every record includes
+`schemaVersion`, `sequence`, `runId`, `scriptPath`, `runDirectory`, and `type`.
+A completed run includes its result, usage, failures, and journal path:
 
 ```json
-{"runId":"workflow-…","schemaVersion":1,"sequence":0,"scriptPath":"/repo/workflow.js","transcriptDirectory":"/repo/.gpt-workflow/runs/workflow-…","type":"run.started"}
-{"runId":"workflow-…","schemaVersion":1,"sequence":1,"scriptPath":"/repo/workflow.js","transcriptDirectory":"/repo/.gpt-workflow/runs/workflow-…","event":{"depth":0,"event":{"detail":null,"title":"Research","type":"phase"},"fileName":"/repo/workflow.js"},"type":"workflow.event"}
-{"runId":"workflow-…","schemaVersion":1,"sequence":2,"scriptPath":"/repo/workflow.js","transcriptDirectory":"/repo/.gpt-workflow/runs/workflow-…","journalPath":"/repo/.gpt-workflow/runs/workflow-…/journal.jsonl","result":{"answer":42},"type":"run.completed"}
+{"runId":"workflow-123","schemaVersion":1,"sequence":0,"scriptPath":"/repo/.codex/workflows/my-workflow.js","runDirectory":"/repo/.codex/workflows/runs/workflow-123","type":"run.started"}
+{"runId":"workflow-123","schemaVersion":1,"sequence":1,"scriptPath":"/repo/.codex/workflows/my-workflow.js","runDirectory":"/repo/.codex/workflows/runs/workflow-123","journalPath":"/repo/.codex/workflows/runs/workflow-123/journal.jsonl","result":{"answer":42},"type":"run.completed"}
 ```
 
-Human-readable errors go to stderr, so stdout can be tailed or piped without
-breaking the stream:
+Capture or filter the stream without breaking it:
 
 ```sh
-gpt-workflow run workflow.js | tee run.jsonl
-gpt-workflow run workflow.js | jq -c 'select(.type == "agent.event")'
+gpt-workflow run .codex/workflows/my-workflow.js | tee run.jsonl
+gpt-workflow run .codex/workflows/my-workflow.js | jq -c 'select(.type == "agent.event")'
 jq -r 'select(.type == "run.completed") | .journalPath' run.jsonl
 ```
 
-The journal is persisted under `.gpt-workflow/runs/<runId>/journal.jsonl` and
-its path is included in the terminal `run.completed` record. A failed run exits
-nonzero after emitting `run.failed` on stdout and a concise diagnostic on
-stderr.
+## Durable journals
 
-## Library API
+Live runs persist an append-only replay journal at:
 
-```js
-import { runWorkflowScript } from "gpt-workflow"
-
-const source = `
-export const meta = {
-  name: "summarize",
-  description: "Summarize a topic"
-}
-
-return {
-  summary: await agent("Summarize " + args.topic, { model: "gpt-5.6-luna" })
-}
-`
-
-const execution = await runWorkflowScript(source, {
-  args: { topic: "deterministic orchestration" },
-  agent: async (prompt) => `offline result for: ${prompt}`
-})
-
-console.log(execution.result)
+```text
+.codex/workflows/runs/<runId>/journal.jsonl
 ```
 
-The injected `agent` makes this example deterministic and offline. For a live
-Codex run, use the same source with the App Server client:
+Resume reuses that run ID and directory. It replays the longest unchanged prefix
+of completed agent calls, then executes and appends from the first changed or
+missing call onward.
+
+Parse large journals one record at a time:
+
+```js
+import { createReadStream } from "node:fs"
+import { createInterface } from "node:readline"
+import { parseWorkflowJournalEntry } from "gpt-workflow"
+
+const lines = createInterface({
+  input: createReadStream(journalPath),
+  crlfDelay: Infinity
+})
+
+for await (const line of lines) {
+  if (line.trim() === "") continue
+  const entry = parseWorkflowJournalEntry(line)
+  if (entry.type === "result") console.log(entry.result)
+}
+```
+
+The journal is workflow replay state. Codex separately persists full agent
+thread rollouts and exposes them through App Server thread APIs; their private
+on-disk layout is not a `gpt-workflow` contract.
+
+## Library API
 
 ```js
 import {
@@ -90,6 +86,17 @@ import {
   REQUIRED_APP_SERVER_MODELS,
   runWorkflowScript
 } from "gpt-workflow"
+
+const source = `
+export const meta = {
+  name: "summarize",
+  description: "Summarize a topic"
+}
+
+return await agent("Summarize " + args.topic, {
+  model: "gpt-5.6-luna"
+})
+`
 
 const client = await AppServerClient.connect({
   requiredModels: REQUIRED_APP_SERVER_MODELS
@@ -100,24 +107,42 @@ try {
     appServer: client,
     args: { topic: "deterministic orchestration" }
   })
-  console.log(execution.result)
+  console.log(execution.result, execution.journalPath)
 } finally {
   await client.close()
 }
 ```
 
+`runWorkflowScript` accepts `runDirectory` for caller-owned storage and
+`resumeFromRunId` for library resume. An injected `agent` can drive offline
+tests without Codex.
+
+## Codex plugin
+
+This repository is itself an installable Codex plugin with an author/run/debug
+skill:
+
+```sh
+codex plugin marketplace add CyrusNuevoDia/gpt-workflow
+codex plugin add gpt-workflow@gpt-workflow
+```
+
+See [plugin installation and behavior](docs/07-plugin.md).
+
 ## Documentation
 
-Start with [Getting started](docs/01-getting-started.md), then use the
-[documentation index](docs/README.md) for the script format, public API,
-runtime semantics, orchestration patterns, and limits.
+Start with [Getting started](docs/01-getting-started.md) or use the full
+[documentation index](docs/README.md). The Claude material used as parity
+reference is preserved under
+[`.claude/workflows/docs/`](.claude/workflows/docs/) and is not presented as
+the Codex package contract.
 
-The 13 executable reference workflows in [`.claude/workflows/`](.claude/workflows/)
-are mirrored into [`.codex/workflows/`](.codex/workflows/) and exercised by the
+The executable reference workflows in [`.claude/workflows/`](.claude/workflows/)
+are mechanically mirrored into [`.codex/workflows/`](.codex/workflows/) for the
 test suite.
 
-Workflow scripts execute in a `node:vm` semantic sandbox. Treat them as trusted
-repository code; this is not a security boundary for hostile JavaScript.
+Workflow scripts execute in a `node:vm` semantic boundary. Treat them as trusted
+repository code; this is not a hostile-code security sandbox.
 
 ## Verify
 
@@ -125,12 +150,7 @@ repository code; this is not a security boundary for hostile JavaScript.
 just check
 ```
 
-`just check` runs formatting checks, the complete offline verifier, and package
-verification. Package verification builds the project, checks the exact npm
-tarball contents, installs that tarball into a clean consumer project, imports
-the package by name, typechecks a strict consumer, and runs both the library and
-installed CLI smokes. It leaves no build or verification debris in the
-repository.
-
-`just mirror` regenerates the Codex workflow fixtures. `just verify` exercises
-the complete live Codex App Server suite and spends model tokens.
+`just check` runs formatting checks, offline verification, package packing and
+installation, strict consumer typechecking, and installed CLI smokes. It does
+not spend model tokens. `just mirror` regenerates the Codex fixtures;
+`just verify` runs the live App Server suite and does spend model tokens.
