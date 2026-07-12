@@ -1,8 +1,8 @@
-# GPT Workflow Runtime Plan
+# GPT Workflow Distribution Plan
 
 Stable goal: [`goal.md`](goal.md)
 
-Canonical verifier: [`../../VERIFY.md`](../../VERIFY.md)
+Primary verifier: `just check`
 
 Only one phase may be in progress. Update this file after steering, material new
 evidence, a failed verification, or a completed milestone.
@@ -312,7 +312,247 @@ Exit criteria
   `bun run verify:live`, and `bun run verify` all exited zero; offline totals
   were 57 tests passed, 0 failed, and 203 assertions.
 
+## Phase 7: Define the installable library boundary
+
+Status: complete
+
+Implementation
+
+- [x] Add a narrow public entrypoint for workflow execution and App Server
+  control without exporting verification, journal, worktree, or scheduler
+  internals unnecessarily.
+- [x] Make the single root `tsconfig.json` cover `src/**/*.ts` and
+  `tests/**/*.ts` plus imported repository scripts, while package metadata
+  allowlists only the public runtime output. The verified six-file enumeration
+  was invalidated by user steering.
+- [x] Replace the private/nonexistent-entrypoint manifest with deliberate
+  version, description, export, runtime dependency, engine, and package-file
+  metadata. Repository metadata remains coupled to Phase 8's remote creation or
+  discovery because the proposed GitHub coordinate does not exist.
+- [x] Make the committed composition fixtures repository-portable and preserve
+  the mechanical Claude-to-Codex mirror.
+
+Verification
+
+- [x] Re-run the production build and import the built entrypoint under Node
+  after collapsing to one TypeScript config.
+- [x] Run `bun run check`, `bun run verify:offline`, the mirror checker, and
+  `git diff --check`.
+- [x] Observable pass: build output and declarations resolve without source-only
+  imports, all offline runtime behavior remains green, and fixture search finds
+  no checkout-specific absolute paths.
+
+Exit criteria
+
+- [x] The repository has one intentional library entrypoint and a reproducible
+  production build ready for packaging.
+
+## Phase 8: Prove tarball and GitHub installation
+
+Status: complete
+
+Implementation
+
+- [x] Add a repository-owned `verify:package` command that builds, inspects the
+  complete npm pack list, creates the tarball outside the repository, installs
+  it into a temporary consumer, and runs the public Node smoke.
+- [x] Keep all generated package/install artifacts outside the repository or
+  remove them reliably after failure and success.
+- [ ] Exercise the same smoke through an immutable GitHub dependency once a
+  remote URL is available.
+
+Verification
+
+- [x] Run `npm pack --dry-run --json` and review every returned path.
+- [x] Run `bun run verify:package` from the repository root and from a clean
+  checkout-equivalent state.
+- [x] Observable pass: only deliberate package files are present, the clean
+  consumer imports by package name, and offline workflow execution returns the
+  expected result under Node.
+
+Exit criteria
+
+- [x] Local tarball installation is proven and GitHub installation is proven or
+  isolated as the sole true external blocker.
+
+## Phase 9: Replace development-era repository surfaces
+
+Status: complete
+
+Implementation
+
+- [x] Rewrite `README.md` and affected docs around the implemented installable
+  library, its requirements, public API, limitations, and install paths.
+- [x] Remove root `GOAL.md`, `VERIFY.md`, and `PARITY.md`, relocating only
+  lasting user or maintainer knowledge into public docs, tests, or commands.
+- [x] Confirm `.verification-artifacts/`, build output, tarballs, temporary
+  consumers, and other generated evidence are absent and ignored or excluded.
+
+Verification
+
+- [x] Sweep all tracked files and packed paths for stale root-doc links,
+  spec-only claims, checkout-specific paths, and verification debris.
+- [x] Run `bun run check`, `bun run verify:offline`, `bun run verify:package`,
+  `git diff --check`, and inspect the full filesystem plus git status.
+- [x] Obtain a fresh Sol/high review of the public package,
+  documentation, and install proof.
+
+Exit criteria
+
+- [x] The repository reads as the product, the npm tarball contains only the
+  product, and every local completion-proof item in `goal.md` is satisfied;
+  immutable GitHub installation remains the recorded external edge.
+
+## Current evidence
+
+- Prior runtime phases 1-6 remain complete; their detailed offline/live proof
+  above is preserved as the regression baseline.
+- The initial `npm pack --dry-run --json` failure
+  (`Invalid package, must have name and version`) is resolved.
+- Terra/high packaging audit session:
+  `019f577c-2b72-7e13-ad0c-8f269812dccc`.
+- Luna/xhigh hygiene audit session:
+  `019f577c-2a71-7c00-b076-3cb0b7a8bcd7` (interrupted after it identified the
+  stale public docs, tracked private goal history, and absolute fixture paths).
+- `.verification-artifacts/` is currently absent and ignored.
+- Phase 7 parent verification: `bun run build`, the Node import/execution smoke,
+  `bun run check`, `bun run verify:offline`, `bun run mirror:check`, and
+  `git diff --check` all passed. Offline totals are 57 tests, 0 failures, and
+  197 expectations; mirror totals are 13 discovered/target/compared with no
+  drift.
+- Phase 7 Terra/high implementation session:
+  `019f5782-bfeb-7ac0-b6f7-baf2d5eed3a6`.
+- `gh repo view CyrusNuevoDia/gpt-workflow` reports that the repository cannot
+  be resolved, and Git has no configured remote. Immutable GitHub-install proof
+  is therefore not yet available.
+- Parent cleanup removed `dist/`, `.verification-artifacts/`, build info, and
+  tarballs after verification.
+- User steering invalidated the separate `tsconfig.build.json` approach. Phase
+  7 is reopened until the same build/import/check evidence passes using only
+  root `tsconfig.json`; the Phase 8 verifier delegate was interrupted before it
+  edited any files.
+- Single-config correction verified: `bun run build`, the Node import/execution
+  smoke, `bun run check`, `bun run verify:offline`, and `git diff --check` all
+  passed using only root `tsconfig.json`; totals remain 57 tests, 0 failures,
+  and 197 expectations. Generated output was removed afterward.
+- User steering then replaced the six-file root project with a broader desired
+  TypeScript project covering all source and tests. Phase 7 is reopened until
+  that broader build passes and the package allowlist still excludes verifier,
+  test, and script output.
+- Broad-project correction verified: root `tsconfig.json` now includes all
+  `scripts/**/*.ts`, `src/**/*.ts`, and `tests/**/*.ts`; local module specifiers
+  are Node-compatible; `bunfig.toml` keeps generated `dist/tests` out of Bun
+  discovery; package metadata allowlists only the 12 public runtime JS and
+  declaration files under `dist/src`. Build, Node import/execution, check,
+  offline verification, mirror, and diff checks all pass with 57 tests and 197
+  expectations. Generated output was removed afterward.
+- Phase 8 Sol/high rewrite session:
+  `019f579d-dea8-73b0-ac40-0cc5f2879a91`. It replaced an interrupted
+  893-line verifier with a direct 335-line implementation.
+- Parent ran `bun run verify:package` twice. Both runs returned the complete
+  14-path pack surface (README, package metadata, and 12 allowlisted runtime
+  outputs), installed the actual `gpt-workflow-0.1.0.tgz` into a fresh npm
+  consumer, passed exact public-export/parse/offline-execution Node smokes, and
+  removed dist, build info, tarballs, temp consumers, caches, and artifacts.
+- Immutable GitHub install remains explicitly not proven: no remote is
+  configured and `CyrusNuevoDia/gpt-workflow` does not currently resolve.
+- Phase 9 rewrote the README and getting-started path around the exported
+  `AppServerClient` and `runWorkflowScript` lifecycle, removed the three root
+  development documents, and cleared all public stale-link and machine-path
+  searches.
+- The first strict TypeScript consumer smoke caught missing Node ambient types.
+  `@types/node` is now an explicit package dependency, and the installed
+  tarball passes both its Node runtime smoke and a strict NodeNext typecheck.
+- Final local verification: 57 tests passed with 197 expectations; mirror
+  discovered/target/compared 13/13/13; offline verification passed; package
+  verification passed with the exact 14-path surface and removed all generated
+  output.
+- Final GPT-5.6 Sol/high review session:
+  `019f57aa-d43d-7ba3-8ff9-c59d54142bed`. Verdict: no local findings; only the
+  absent remote, absent license, and unexercised registry publication remain.
+
 ## Next action
 
-Goal complete. Keep the finalized report and browser proof as the reproducible
-reference for future runtime changes.
+Execute Phase 11. Choosing a license remains a separate user decision.
+
+## Phase 10: Add the streaming workflow CLI
+
+Status: complete
+
+Implementation
+
+- [x] Add `src/cli.ts` with the single command
+  `gpt-workflow run <script.js>` using Bun argv/file APIs and `parseArgs`.
+- [x] Stream ordered, self-contained NDJSON records for run start, workflow
+  events, App Server agent events, completion, and failure; reserve stderr for
+  human diagnostics.
+- [x] Add the package `bin` contract and include only the built executable in
+  the tarball alongside the existing library files.
+- [x] Move deterministic checks and mirror operations into `justfile`, name the
+  explicit live suite `just verify`, and leave only build/prepare lifecycle
+  scripts in `package.json`.
+- [x] Update `README.md` with CLI installation, execution, NDJSON, journal, and
+  `jq` examples.
+
+Verification
+
+- [x] Test parsing, help/errors, ordering, workflow/agent forwarding, terminal
+  records, and nonzero failures without live model calls.
+- [x] Extend `verify:package` to execute the installed bin from the clean
+  consumer in addition to the library runtime and type smokes.
+- [x] Run `just check`, `git diff --check`, and the debris sweep. Keep the
+  token-spending `just verify` out of the deterministic regression loop unless
+  CLI/runtime changes invalidate prior live proof.
+
+Exit criteria
+
+- [x] A caller can install the tarball, invoke
+  `gpt-workflow run path/to/script.js`, consume every stdout line as JSON, and
+  locate the durable journal from the terminal record.
+
+Evidence
+
+- `just check`: exit 0; Ultracite clean; offline verifier 61 tests passed, 0
+  failed, 217 expectations; exact mirror 13/13; package verifier passed.
+- Packed surface: 15 complete paths—README, package metadata, 12 library JS/d.ts
+  files, and `dist/src/cli.js`. The clean consumer passed the Node runtime,
+  strict NodeNext type, installed-bin NDJSON, and durable-journal smokes.
+- Live CLI smoke: one Luna call returned exactly `cli-live-ok`; stdout contained
+  22 individually parseable records with contiguous sequences 0-21 and one
+  run ID; the terminal record contained the result, journal path, and usage.
+- The CLI starts App Server lazily on the first `agent()` call, so zero-agent
+  workflows and the installed package smoke do not require Codex or spend
+  tokens.
+- `package.json` now contains only `build` and `prepare`; `just check` owns the
+  deterministic aggregate, `just mirror` owns fixture generation, and
+  `just verify` owns the explicit live suite.
+- Final GPT-5.6 Sol/high CLI review session:
+  `019f57c3-3c83-7040-9eeb-6de8a8c21091`. Verdict: no findings. Residual risks
+  are external live-service availability and unexercised malformed-input,
+  abrupt-termination, and high-concurrency edges.
+
+## Phase 11: Publish GitHub and npm release surfaces
+
+Status: in progress
+
+Implementation
+
+- [ ] Add canonical repository metadata and Node 24/Bun CI.
+- [ ] Commit the complete local distribution work in logical slices, create the
+  public `CyrusNuevoDia/gpt-workflow` repository, and push `main`.
+- [ ] Publish the unclaimed `gpt-workflow` package, configure npm trusted
+  publishing for `.github/workflows/release-cli.yml`, and add the adapted
+  Changesets release workflow from `capn-hook`.
+
+Verification
+
+- [ ] Require `just check` locally and green GitHub CI on the pushed commit.
+- [ ] Install the immutable GitHub commit into a clean consumer and run the
+  package/CLI smoke.
+- [ ] Verify npm registry metadata, install `gpt-workflow@0.1.0` into a clean
+  consumer, and run the public library and CLI smokes.
+
+Exit criteria
+
+- [ ] The public GitHub repository, immutable Git install, npm package, trusted
+  publisher, and future release workflow are all proven from live state.
