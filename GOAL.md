@@ -24,7 +24,10 @@ The repository contains a Bun-based workflow runtime that:
 - lets the orchestrator send input to and interrupt a running subagent;
 - returns authoritative text or schema-validated structured results; and
 - produces machine-readable verification evidence from both offline tests and
-  live GPT runs.
+  live GPT runs;
+- records verified implementation milestones as logical git commits; and
+- leaves a self-contained `BRIEF.html` that makes the finished architecture,
+  proof, limitations, and commit history reviewable without rerunning the goal.
 
 The original `.claude/workflows/` files remain the reference fixtures. The
 `.codex/workflows/` files are their GPT-native counterparts, not a second

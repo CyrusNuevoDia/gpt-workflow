@@ -47,8 +47,12 @@ discover current capabilities and fail clearly when they are unavailable.
   `VERIFY.md`.
 - Keep secrets out of prompts, logs, reports, and committed artifacts.
 - Preserve unrelated changes in the shared worktree and stage only authored
-  paths if commits are later requested.
+  paths.
 - Keep at most one phase in `plan.md` in progress.
+- Commit each verified phase or coherent milestone as a logical local git
+  commit, including the plan evidence that proves it complete.
+- Luna/xhigh implementation delegates are authorized for bounded, disjoint
+  paths. Delegates do not commit; the parent reviews and integrates every diff.
 
 ## Approval gates
 
@@ -85,7 +89,7 @@ verdict:
 VERDICT: PASS
 ```
 
-The authoritative condition list is R1 through R14 in `VERIFY.md`. Nice-to-have
+The authoritative condition list is R1 through R15 in `VERIFY.md`. Nice-to-have
 conditions do not block completion.
 
 ## Supporting checks
@@ -108,8 +112,10 @@ primary verifier.
 4. Re-run the phase check and record evidence in `plan.md`.
 5. Update phase status and the next action without erasing failed-attempt
    evidence.
-6. Run the full verifier only when its cheaper prerequisites are green.
-7. Repeat until all required conditions pass.
+6. Commit the verified milestone and its durable plan evidence as one logical
+   local commit.
+7. Run the full verifier only when its cheaper prerequisites are green.
+8. Repeat until all required conditions pass.
 
 ## Anti-cheating rules
 
@@ -148,4 +154,6 @@ Before marking the goal complete, all of the following must be true:
   caching.
 - The live event evidence proves streaming, steering, and isolated
   interruption—not merely final-response collection.
-- An adversarial read of `VERIFY.md` yields `VERDICT: PASS` for R1 through R14.
+- Root `BRIEF.html` renders cleanly and accurately summarizes the final report,
+  evidence, limitations, and logical implementation history.
+- An adversarial read of `VERIFY.md` yields `VERDICT: PASS` for R1 through R15.

@@ -303,6 +303,32 @@ minimum prove it rejects:
 
 The real repository must not be modified to perform these negative controls.
 
+### R15 — Morning review brief
+
+Open the repository-root `BRIEF.html` in a browser and compare every factual
+claim against the final machine-readable verification report and git history.
+
+Required:
+
+- The file is self-contained and readable without a development server or
+  external network request.
+- It explains the finished architecture and the boundary between the Bun
+  workflow VM and Codex App Server.
+- It reports the exact offline test totals, discovered workflows, required and
+  completed live invocations, pass/fail/pending/skipped totals, Luna/Terra call
+  totals, and final verifier verdict.
+- It presents the streaming/steering/interruption proof and the three
+  `parity-12` resume legs with links or paths to their evidence artifacts.
+- It lists known limitations and nice-to-have failures honestly.
+- It includes the logical implementation commit history for this goal.
+- It contains no secret, access token, authorization header, complete
+  environment dump, or unsupported success claim.
+- The rendered page has no overlapping, clipped, or unreadable primary content
+  at a normal desktop viewport.
+
+Missing, stale, unrenderable, or factually inconsistent brief content fails
+this condition.
+
 ## Nice-to-have conditions
 
 ### N1 — Rich collaboration visibility
@@ -328,4 +354,4 @@ mock where a live run was required, any discovered workflow or invocation was
 not completed, any required event was inferred rather than captured, or any
 command failed, print `VERDICT: FAIL`.
 
-Print `VERDICT: PASS` only when R1 through R14 all pass.
+Print `VERDICT: PASS` only when R1 through R15 all pass.

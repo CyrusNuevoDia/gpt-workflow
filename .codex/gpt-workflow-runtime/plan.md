@@ -9,7 +9,7 @@ evidence, a failed verification, or a completed milestone.
 
 ## Phase 1: Bootstrap the executable verifier and workflow mirror
 
-Status: pending
+Status: in progress
 
 Implementation
 
@@ -153,6 +153,8 @@ Implementation
 - [ ] Fix runtime defects against concrete suite or event evidence.
 - [ ] Produce the complete machine-readable report and secret-safe event or
   transcript artifacts.
+- [ ] Create the repository-root `BRIEF.html` from verified final evidence and
+  logical git history.
 - [ ] Preserve failed-attempt evidence and exact pending/failed/skipped counts
   until they reach zero.
 
@@ -161,12 +163,13 @@ Verification
 - [ ] Run `bun run check`.
 - [ ] Run `bun run verify:offline` twice from fresh processes.
 - [ ] Run `bun run verify:live` without skipped or pending invocations.
-- [ ] Run `bun run verify` and adversarially evaluate R1 through R14.
+- [ ] Render `BRIEF.html` in a browser and inspect a normal desktop viewport.
+- [ ] Run `bun run verify` and adversarially evaluate R1 through R15.
 - [ ] Inspect report totals, artifacts, usage, failures, and secret redaction.
 
 Exit criteria
 
-- [ ] R1 through R14 all pass.
+- [ ] R1 through R15 all pass.
 - [ ] Every discovered workflow and required invocation completed successfully.
 - [ ] `VERIFY.md` ends in `VERDICT: PASS` with current evidence.
 
@@ -183,5 +186,6 @@ Exit criteria
 
 ## Next action
 
-Activate the goal, mark Phase 1 in progress, then implement the smallest honest
-R1/R2 slice: the command surface, mechanical workflow mirror, and drift checker.
+Activate the goal, then implement the smallest honest R1/R2 slice: the command
+surface, mechanical workflow mirror, and drift checker. Commit the verified
+milestone together with this plan's evidence.
