@@ -355,3 +355,22 @@ not completed, any required event was inferred rather than captured, or any
 command failed, print `VERDICT: FAIL`.
 
 Print `VERDICT: PASS` only when R1 through R15 all pass.
+
+## Final verified result
+
+- Final report:
+  `.verification-artifacts/phase6-20260712111549-4608b91a-8a59-4869-a506-d248fc5e2550/report.json`
+- R1-R15: all passed.
+- Live parity: 13 workflows discovered; 16/16 invocations completed and passed;
+  0 failed, pending, skipped, or interrupted.
+- Whole-verifier model usage: Luna 31 live and 4 replayed calls; Terra 1 live
+  call; 1,129,489 subagent tokens.
+- Offline verification: 57 tests passed, 0 failed, 203 assertions.
+- Artifacts: secret scan passed; the append-only event stream, exact-prefix
+  journals, final report, browser proof, and root `BRIEF.html` are present.
+- Browser review: the self-contained final PASS brief rendered at 1440x900
+  without overlap, horizontal clipping, or unreadable primary content.
+- Stable commands: `bun run check`, `bun run verify:offline`,
+  `bun run verify:live`, and `bun run verify` all exited zero.
+
+VERDICT: PASS

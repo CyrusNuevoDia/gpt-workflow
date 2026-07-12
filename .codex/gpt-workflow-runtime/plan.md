@@ -255,33 +255,33 @@ Evidence
 
 ## Phase 6: Close the complete live parity sweep
 
-Status: in progress
+Status: complete
 
 Implementation
 
-- [ ] Run all discovered Codex workflows and every documented invocation mode.
-- [ ] Fix runtime defects against concrete suite or event evidence.
-- [ ] Produce the complete machine-readable report and secret-safe event or
+- [x] Run all discovered Codex workflows and every documented invocation mode.
+- [x] Fix runtime defects against concrete suite or event evidence.
+- [x] Produce the complete machine-readable report and secret-safe event or
   transcript artifacts.
-- [ ] Create the repository-root `BRIEF.html` from verified final evidence and
+- [x] Create the repository-root `BRIEF.html` from verified final evidence and
   logical git history.
-- [ ] Preserve failed-attempt evidence and exact pending/failed/skipped counts
+- [x] Preserve failed-attempt evidence and exact pending/failed/skipped counts
   until they reach zero.
 
 Verification
 
-- [ ] Run `bun run check`.
-- [ ] Run `bun run verify:offline` twice from fresh processes.
-- [ ] Run `bun run verify:live` without skipped or pending invocations.
-- [ ] Render `BRIEF.html` in a browser and inspect a normal desktop viewport.
-- [ ] Run `bun run verify` and adversarially evaluate R1 through R15.
-- [ ] Inspect report totals, artifacts, usage, failures, and secret redaction.
+- [x] Run `bun run check`.
+- [x] Run `bun run verify:offline` twice from fresh processes.
+- [x] Run `bun run verify:live` without skipped or pending invocations.
+- [x] Render `BRIEF.html` in a browser and inspect a normal desktop viewport.
+- [x] Run `bun run verify` and adversarially evaluate R1 through R15.
+- [x] Inspect report totals, artifacts, usage, failures, and secret redaction.
 
 Exit criteria
 
-- [ ] R1 through R15 all pass.
-- [ ] Every discovered workflow and required invocation completed successfully.
-- [ ] `VERIFY.md` ends in `VERDICT: PASS` with current evidence.
+- [x] R1 through R15 all pass.
+- [x] Every discovered workflow and required invocation completed successfully.
+- [x] `VERIFY.md` ends in `VERDICT: PASS` with current evidence.
 
 ## Current evidence
 
@@ -294,9 +294,25 @@ Exit criteria
 - Phases 1-4 are complete: the 13-file mirror, deterministic Bun VM, persistent
   App Server client, authoritative results, real-time normalized progress, and
   runtime-managed steering/interruption all have offline and live proof.
+- Final run:
+  `.verification-artifacts/phase6-20260712111549-4608b91a-8a59-4869-a506-d248fc5e2550/report.json`.
+- Required conditions: R1-R15 passed; final report verdict `PASS`; secret scan
+  passed with zero redactions.
+- Matrix: 13 discovered workflows, 16 required/completed/passed invocations,
+  zero failed, pending, skipped, or interrupted invocations, and 2 documented
+  absorbed fan-out failures.
+- Model usage across the whole verifier: Luna 35 logical calls (31 live, 4
+  replayed), Terra 1 logical/live call, and 1,129,489 subagent tokens.
+- Resume: R2 replayed all three calls byte-identically with zero live calls and
+  zero subagent tokens; R3 replayed A and refreshed B/C after the prefix miss.
+- Browser proof: 1440x900 local render, final full-page screenshot
+  `brief-desktop-final-pass.png`, exact report/brief hashes in
+  `browser-proof.json`, and no overlap or horizontal clipping.
+- Stable command contract: `bun run check`, `bun run verify:offline`,
+  `bun run verify:live`, and `bun run verify` all exited zero; offline totals
+  were 57 tests passed, 0 failed, and 203 assertions.
 
 ## Next action
 
-Implement the complete 16-invocation live sweep, durable report/event artifacts,
-negative verifier controls, root `BRIEF.html`, browser review, and final R1-R15
-verdict.
+Goal complete. Keep the finalized report and browser proof as the reproducible
+reference for future runtime changes.
