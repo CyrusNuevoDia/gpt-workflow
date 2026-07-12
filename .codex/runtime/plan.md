@@ -473,7 +473,8 @@ Exit criteria
 
 ## Next action
 
-Execute Phase 11. Choosing a license remains a separate user decision.
+The distribution goal is achieved. Choosing a license remains a separate user
+decision.
 
 ## Phase 10: Add the streaming workflow CLI
 
@@ -533,26 +534,52 @@ Evidence
 
 ## Phase 11: Publish GitHub and npm release surfaces
 
-Status: in progress
+Status: complete
 
 Implementation
 
-- [ ] Add canonical repository metadata and Node 24/Bun CI.
-- [ ] Commit the complete local distribution work in logical slices, create the
+- [x] Add canonical repository metadata and Node 24/Bun CI.
+- [x] Commit the complete local distribution work in logical slices, create the
   public `CyrusNuevoDia/gpt-workflow` repository, and push `main`.
-- [ ] Publish the unclaimed `gpt-workflow` package, configure npm trusted
+- [x] Publish the unclaimed `gpt-workflow` package, configure npm trusted
   publishing for `.github/workflows/release-cli.yml`, and add the adapted
   Changesets release workflow from `capn-hook`.
 
 Verification
 
-- [ ] Require `just check` locally and green GitHub CI on the pushed commit.
-- [ ] Install the immutable GitHub commit into a clean consumer and run the
+- [x] Require `just check` locally and green GitHub CI on the pushed commit.
+- [x] Install the immutable GitHub commit into a clean consumer and run the
   package/CLI smoke.
-- [ ] Verify npm registry metadata, install `gpt-workflow@0.1.0` into a clean
+- [x] Verify npm registry metadata, install `gpt-workflow@0.1.0` into a clean
   consumer, and run the public library and CLI smokes.
 
 Exit criteria
 
-- [ ] The public GitHub repository, immutable Git install, npm package, trusted
+- [x] The public GitHub repository, immutable Git install, npm package, trusted
   publisher, and future release workflow are all proven from live state.
+
+Evidence
+
+- Public repository: `https://github.com/CyrusNuevoDia/gpt-workflow`; visibility
+  `PUBLIC`; default branch `main`.
+- Product, goal-state, CI, shell-portability, trusted-release, and npm-wrapper
+  fixes landed as separate commits. Every push was preceded by an
+  `origin/main` fast-forward pull once the remote existed.
+- Immutable Git install at
+  `288e94b8bb9b371a913e4a3d9f98d42f7ab8372c` passed the public Node import and
+  installed `gpt-workflow` CLI NDJSON/journal smokes.
+- `gpt-workflow@0.1.0` published publicly with `latest=0.1.0`, 15 packed files,
+  `bin.gpt-workflow=dist/src/cli.js`, Node `>=24`, shasum
+  `5b13accae6035b9d9e8681bab2847810d025e3b8`, and repository metadata pointing
+  at the public GitHub repository.
+- A clean registry consumer installed `gpt-workflow@0.1.0`, imported the public
+  library, found an executable bin link, and completed the CLI NDJSON/journal
+  smoke.
+- npm trusted publishing configuration `ed3c953e-406f-446c-8e09-0ff168d2efbe`
+  grants publish permission only to
+  `CyrusNuevoDia/gpt-workflow:.github/workflows/release-cli.yml`.
+- GitHub CI run `29209366279` and release run `29209366294` both passed on
+  `c0a014f9d431ca25cd9d1ce428b08f5e267f882d`; the release correctly skipped the
+  already-published `0.1.0` rather than duplicating it.
+- No SPDX license was selected or claimed; that legal choice remains with the
+  user and does not weaken the verified technical install/publish surface.

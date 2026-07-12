@@ -31,8 +31,8 @@ installation from the GitHub repository. Publishing to npm is not required.
   package allowlist must prevent future runtime evidence from leaking.
 - Two Claude composition fixtures contain checkout-specific absolute paths and
   must become repository-portable without weakening mirror/parity coverage.
-- No Git remote is currently configured, so a real remote GitHub install cannot
-  be exercised until the repository URL exists locally or is supplied.
+- The public Git remote is `CyrusNuevoDia/gpt-workflow`; immutable GitHub and
+  npm registry installation are now part of the verified release surface.
 
 ## Constraints
 
