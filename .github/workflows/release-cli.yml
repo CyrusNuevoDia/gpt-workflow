@@ -1,0 +1,90 @@
+name: release-cli
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: release-cli-${{ github.ref }}
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  NODE_VERSION: "24"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        name: checkout
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        name: setup[bun]
+        with:
+          bun-version-file: package.json
+      - uses: actions/setup-node@v6
+        name: setup[node]
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: extractions/setup-just@v4
+        name: setup[just]
+        with:
+          just-version: "1.40.0"
+      - name: setup[npm]
+        run: |
+          mkdir -p "$RUNNER_TEMP/npm-wrapper"
+          cat > "$RUNNER_TEMP/npm-wrapper/npm" <<'SCRIPT'
+          #!/usr/bin/env bash
+          exec bunx --bun npm@latest "$@"
+          SCRIPT
+          chmod +x "$RUNNER_TEMP/npm-wrapper/npm"
+          echo "$RUNNER_TEMP/npm-wrapper" >> "$GITHUB_PATH"
+          npm --version
+      - name: deps
+        run: bun install --frozen-lockfile
+      - name: check
+        run: just check
+      - name: version
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          if ! compgen -G ".changeset/*.md" > /dev/null; then
+            echo "No changesets present; package is already versioned."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          bun changeset version
+          bun install --lockfile-only
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "changeset version produced no changes; nothing to commit."
+            exit 0
+          fi
+
+          git commit -m "chore(release): bump gpt-workflow version"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+      - name: publish
+        run: |
+          version="$(jq -r '.version' package.json)"
+
+          if npm view "gpt-workflow@$version" version >/dev/null 2>&1; then
+            echo "gpt-workflow@$version is already published; skipping."
+            exit 0
+          fi
+
+          npm pack --dry-run --json
+          bun changeset publish
+          release_version="gpt-workflow@$version"
+          if ! git rev-parse "$release_version" >/dev/null 2>&1; then
+            git tag "$release_version"
+          fi
+          git push origin --tags
