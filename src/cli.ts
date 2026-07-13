@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { randomUUID } from "node:crypto"
-import { dirname, join, resolve } from "node:path"
+import { join, resolve } from "node:path"
 import { parseArgs } from "node:util"
 import { AppServerClient, REQUIRED_APP_SERVER_MODELS } from "./app-server.js"
 import {
@@ -10,16 +10,17 @@ import {
   type WorkflowExecutionOptions
 } from "./runtime.js"
 
-const USAGE = `Usage: gpt-workflow run [--resume <runId>] <script.js>
+const USAGE = `Usage: gpt-workflow run [--default-model <name>] [--resume <runId>] <script.js>
 
 Run a workflow through Codex App Server. During a run, stdout is NDJSON and
 human-readable diagnostics are written to stderr.
 `
+const RUN_ID_PATTERN = /^[A-Za-z0-9._-]+$/
 
 type CLIClient = Pick<AppServerClient, "close" | "startAgent">
 
 type CLIDependencies = {
-  connect: () => Promise<CLIClient>
+  connect: (options: { defaultModel?: string }) => Promise<CLIClient>
   cwd: () => string
   makeRunId: () => string
   readSource: (path: string) => Promise<string>
@@ -32,8 +33,11 @@ type CLIDependencies = {
 }
 
 const defaultDependencies: CLIDependencies = {
-  connect: () =>
-    AppServerClient.connect({ requiredModels: REQUIRED_APP_SERVER_MODELS }),
+  connect: ({ defaultModel }) =>
+    AppServerClient.connect({
+      requiredModels: REQUIRED_APP_SERVER_MODELS,
+      ...(defaultModel === undefined ? {} : { defaultModel })
+    }),
   cwd: () => process.cwd(),
   makeRunId: () => `workflow-${randomUUID()}`,
   readSource: (path) => Bun.file(path).text(),
@@ -56,6 +60,7 @@ export async function runCLI(
       allowPositionals: true,
       args,
       options: {
+        "default-model": { type: "string" },
         help: { short: "h", type: "boolean" },
         resume: { type: "string" }
       },
@@ -74,7 +79,7 @@ export async function runCLI(
   const [command, scriptArgument, ...extra] = parsed.positionals
   if (command !== "run" || !scriptArgument || extra.length > 0) {
     dependencies.writeError(
-      `gpt-workflow: expected exactly: gpt-workflow run [--resume <runId>] <script.js>\n${USAGE}`
+      `gpt-workflow: expected exactly: gpt-workflow run [--default-model <name>] [--resume <runId>] <script.js>\n${USAGE}`
     )
     return 1
   }
@@ -82,18 +87,22 @@ export async function runCLI(
   const resumeValue = parsed.values.resume
   if (
     resumeValue !== undefined &&
-    (typeof resumeValue !== "string" || resumeValue.trim().length === 0)
+    (typeof resumeValue !== "string" || !RUN_ID_PATTERN.test(resumeValue))
   ) {
     dependencies.writeError(
-      `gpt-workflow: --resume must be a non-empty run ID\n${USAGE}`
+      `gpt-workflow: --resume must contain only letters, numbers, periods, underscores, and hyphens\n${USAGE}`
     )
     return 1
   }
   const resumeFromRunId = resumeValue
+  const defaultModelValue = parsed.values["default-model"]
+  const defaultModel =
+    typeof defaultModelValue === "string" ? defaultModelValue : undefined
   const runId = resumeFromRunId ?? dependencies.makeRunId()
-  const scriptPath = resolve(dependencies.cwd(), scriptArgument)
+  const invocationDirectory = dependencies.cwd()
+  const scriptPath = resolve(invocationDirectory, scriptArgument)
   const runDirectory = join(
-    dependencies.cwd(),
+    invocationDirectory,
     ".codex",
     "workflows",
     "runs",
@@ -126,7 +135,7 @@ export async function runCLI(
     startAgent: async (
       ...agentArgs: Parameters<AppServerClient["startAgent"]>
     ) => {
-      clientPromise ??= dependencies.connect()
+      clientPromise ??= dependencies.connect({ defaultModel })
       return (await clientPromise).startAgent(...agentArgs)
     }
   } as AppServerClient
@@ -142,7 +151,7 @@ export async function runCLI(
     const source = await dependencies.readSource(scriptPath)
     const execution = await dependencies.runWorkflow(source, {
       appServer,
-      cwd: dirname(scriptPath),
+      cwd: invocationDirectory,
       fileName: scriptPath,
       onAgentEvent: (event) => emit({ event, type: "agent.event" }),
       onWorkflowEvent: (event) => emit({ event, type: "workflow.event" }),
@@ -151,7 +160,11 @@ export async function runCLI(
         ? { workflowRunId: runId }
         : { resumeFromRunId })
     })
-    await closeClient()
+    await closeClient().catch((error) => {
+      dependencies.writeError(
+        `gpt-workflow: App Server close failed after run completion: ${describe(error)}\n`
+      )
+    })
     emit({
       failures: execution.failures,
       journalPath: execution.journalPath,

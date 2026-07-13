@@ -40,14 +40,16 @@ test("run streams ordered self-contained NDJSON and closes the App Server", asyn
   let receivedOptions: WorkflowExecutionOptions | undefined
 
   const exitCode = await runCLI(["run", "workflow.js"], {
-    connect: () =>
-      Promise.resolve({
+    connect: (options) => {
+      expect(options).toEqual({ defaultModel: undefined })
+      return Promise.resolve({
         close: () => {
           closed += 1
           return Promise.resolve()
         },
         startAgent: () => Promise.resolve(undefined as never)
-      }),
+      })
+    },
     cwd: () => "/repo",
     makeRunId: () => "workflow-test",
     readSource: (path) => {
@@ -224,7 +226,7 @@ test("help and invalid invocations stay outside the run stream", async () => {
   })
   expect(helpCode).toBe(0)
   expect(helpOutput.join("")).toContain(
-    "gpt-workflow run [--resume <runId>] <script.js>"
+    "gpt-workflow run [--default-model <name>] [--resume <runId>] <script.js>"
   )
 
   const errors: string[] = []
@@ -239,6 +241,106 @@ test("help and invalid invocations stay outside the run stream", async () => {
   })
   expect(invalidCode).toBe(1)
   expect(errors.join("")).toContain(
-    "expected exactly: gpt-workflow run [--resume <runId>] <script.js>"
+    "expected exactly: gpt-workflow run [--default-model <name>] [--resume <runId>] <script.js>"
+  )
+})
+
+test("default model is passed to the App Server connection", async () => {
+  let connectOptions: { defaultModel?: string } | undefined
+  const exitCode = await runCLI(
+    ["run", "--default-model", "gpt-5.6-luna", "workflow.js"],
+    {
+      connect: (options) => {
+        connectOptions = options
+        return Promise.resolve({
+          close: () => Promise.resolve(),
+          startAgent: () => Promise.resolve(undefined as never)
+        })
+      },
+      cwd: () => "/repo",
+      makeRunId: () => "workflow-test",
+      readSource: () => Promise.resolve("workflow source"),
+      runWorkflow: async (_source, options) => {
+        await options.appServer?.startAgent("connect-probe")
+        return execution()
+      },
+      writeError: () => undefined,
+      writeOutput: () => undefined
+    }
+  )
+
+  expect(exitCode).toBe(0)
+  expect(connectOptions).toEqual({ defaultModel: "gpt-5.6-luna" })
+})
+
+test("invalid resume IDs fail before the run stream starts", async () => {
+  const output: string[] = []
+  const errors: string[] = []
+  const exitCode = await runCLI(
+    ["run", "--resume", "../escaped", "workflow.js"],
+    {
+      connect: () => Promise.reject(new Error("must not connect")),
+      cwd: () => "/repo",
+      makeRunId: () => "unused",
+      readSource: () => Promise.reject(new Error("must not read")),
+      runWorkflow: () => Promise.reject(new Error("must not run")),
+      writeError: (text) => errors.push(text),
+      writeOutput: (text) => output.push(text)
+    }
+  )
+
+  expect(exitCode).toBe(1)
+  expect(output).toEqual([])
+  expect(errors.join("")).toContain("--resume must contain only")
+  expect(errors.join("")).toContain("Usage:")
+})
+
+test("live agents use the CLI invocation directory", async () => {
+  let receivedOptions: WorkflowExecutionOptions | undefined
+  const exitCode = await runCLI(["run", "scripts/workflow.js"], {
+    connect: () => Promise.reject(new Error("must not connect")),
+    cwd: () => "/repo",
+    makeRunId: () => "workflow-test",
+    readSource: () => Promise.resolve("workflow source"),
+    runWorkflow: (_source, options) => {
+      receivedOptions = options
+      return Promise.resolve(execution())
+    },
+    writeError: () => undefined,
+    writeOutput: () => undefined
+  })
+
+  expect(exitCode).toBe(0)
+  expect(receivedOptions?.cwd).toBe("/repo")
+  expect(receivedOptions?.fileName).toBe("/repo/scripts/workflow.js")
+})
+
+test("a close failure after success still completes the run", async () => {
+  const output: string[] = []
+  const errors: string[] = []
+  const exitCode = await runCLI(["run", "workflow.js"], {
+    connect: () =>
+      Promise.resolve({
+        close: () => Promise.reject(new Error("close exploded")),
+        startAgent: () => Promise.resolve(undefined as never)
+      }),
+    cwd: () => "/repo",
+    makeRunId: () => "workflow-test",
+    readSource: () => Promise.resolve("workflow source"),
+    runWorkflow: async (_source, options) => {
+      await options.appServer?.startAgent("connect-probe")
+      return execution()
+    },
+    writeError: (text) => errors.push(text),
+    writeOutput: (text) => output.push(text)
+  })
+
+  expect(exitCode).toBe(0)
+  expect(output.map((line) => JSON.parse(line).type)).toEqual([
+    "run.started",
+    "run.completed"
+  ])
+  expect(errors.join("")).toBe(
+    "gpt-workflow: App Server close failed after run completion: close exploded\n"
   )
 })
