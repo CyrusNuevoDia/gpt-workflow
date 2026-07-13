@@ -1,4 +1,4 @@
-# Workflow language
+# Author workflow scripts
 
 ## File shape
 

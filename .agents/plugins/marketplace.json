@@ -1,7 +1,7 @@
 {
   "name": "gpt-workflow",
   "interface": {
-    "displayName": "GPT Workflow"
+    "displayName": "Workflow"
   },
   "plugins": [
     {

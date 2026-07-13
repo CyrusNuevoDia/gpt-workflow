@@ -1,4 +1,0 @@
-interface:
-  display_name: "GPT Workflow"
-  short_description: "Author, run, resume, and debug GPT workflows"
-  default_prompt: "Use $gpt-workflow to author and verify a deterministic multi-agent workflow."

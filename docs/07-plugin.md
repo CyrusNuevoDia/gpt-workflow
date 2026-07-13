@@ -20,7 +20,7 @@ loads the bundled skill. Use `codex plugin marketplace list` and
 
 ## Bundled skill
 
-The `gpt-workflow` skill helps Codex:
+The `workflow` skill helps Codex:
 
 - decide when deterministic orchestration is appropriate;
 - author scripts under `.codex/workflows/`;
@@ -39,7 +39,7 @@ From the repository root:
 
 ```sh
 python3 /path/to/plugin-creator/scripts/validate_plugin.py .
-python3 /path/to/skill-creator/scripts/quick_validate.py skills/gpt-workflow
+python3 /path/to/skill-creator/scripts/quick_validate.py skills/workflow
 ```
 
 Use an isolated Codex home when testing marketplace installation so local

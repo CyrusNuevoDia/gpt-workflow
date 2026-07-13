@@ -1,4 +1,4 @@
-# Running and journals
+# Run and inspect workflows
 
 ## CLI
 

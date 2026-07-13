@@ -1,21 +1,24 @@
 ---
-name: gpt-workflow
+name: workflow
 description: Author, run, resume, inspect, and debug deterministic multi-agent JavaScript workflows powered by the gpt-workflow package and Codex App Server. Use when Codex should create or change a workflow under `.codex/workflows`, choose between `agent`, `parallel`, `pipeline`, and child workflows, execute `gpt-workflow run`, resume a prior run ID, stream a workflow journal, or diagnose workflow replay and runtime failures.
 ---
 
-# GPT Workflow
+# Workflow
 
 Use deterministic JavaScript for orchestration and Codex agents for bounded
 judgment.
 
-## Work from repository truth
+## Work from project truth
 
-1. Read applicable `AGENTS.md` files and inspect the existing workflow, package
-   version, scripts, and local conventions.
-2. Confirm that deterministic multi-agent orchestration is useful. Prefer one
+1. Read applicable `AGENTS.md` files and inspect existing `.codex/workflows/`,
+   project dependencies, and local conventions.
+2. Before running a workflow, verify that the `gpt-workflow` executable is
+   available globally or through the project. If it is missing and dependency
+   setup is in scope, install it with `bun add --global gpt-workflow`.
+3. Confirm that deterministic multi-agent orchestration is useful. Prefer one
    ordinary Codex task when a single context can solve the work without explicit
    fan-out, staging, voting, or replay.
-3. Keep new workflow source under `.codex/workflows/<descriptive-name>.js` unless
+4. Keep new workflow source under `.codex/workflows/<descriptive-name>.js` unless
    the repository establishes another location.
 
 ## Load only the reference needed
@@ -62,12 +65,7 @@ call, all later calls run live.
 
 ## Verify proportionally
 
-For source-only workflow changes, parse and exercise the narrowest useful path.
-For package changes, run repository checks and installed-package smokes. Do not
-run live model verification or spend tokens unless the task requires it or the
-user approves it. Report run ID, journal path, terminal status, failures, and
-the exact checks performed.
-
-In the `gpt-workflow` source repository, `.codex/workflows/parity-*` files are
-generated mirrors. Change their `.claude/workflows/` source and run `just mirror`
-when the task intentionally changes parity fixtures.
+For authoring-only tasks, parse or exercise the narrowest useful offline path.
+Run live agents when the user asked to execute the workflow, not merely to check
+syntax. Report the run ID, journal path, terminal status, failures, and exact
+checks performed.

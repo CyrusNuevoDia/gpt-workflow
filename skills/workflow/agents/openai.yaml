@@ -1,0 +1,4 @@
+interface:
+  display_name: "Workflow"
+  short_description: "Author, run, resume, and debug workflows"
+  default_prompt: "Use $workflow to author and verify a deterministic multi-agent workflow."
