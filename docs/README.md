@@ -2,6 +2,8 @@
 
 These docs describe the implemented Codex runtime and public npm package.
 
+0. [Audience](00-audience.md) — who the package and docs serve, fit and
+   non-goals, and what every page may assume about its reader.
 1. [Getting started](01-getting-started.md) — install, author, run, resume, and
    install the Codex plugin.
 2. [Workflow scripts](02-script-format.md) — metadata, deterministic JavaScript,
