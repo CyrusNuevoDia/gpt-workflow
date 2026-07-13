@@ -5,6 +5,7 @@ import { join } from "node:path"
 import {
   type AppServerAgentHandle,
   AppServerClient,
+  type AppServerClientOptions,
   AppServerModelError,
   type AppServerProcess,
   AppServerProcessError,
@@ -24,9 +25,17 @@ const EXITED_PATTERN = /exited before completion/
 const EXPECTED_ACTIVE_TURN_PATTERN = /expected active turn turn-steer/
 const NO_LONGER_ALLOWED_PATTERN = /no longer allowed/
 const INTERRUPTED_PATTERN = /interrupted/
-const SCHEMA_VALIDATION_PATTERN = /schema validation/
+const RETRIES_EXHAUSTED_PATTERN = /retries were exhausted/
+const BASE_DEVELOPER_INSTRUCTIONS_PATTERN =
+  /^You are a subagent inside a deterministic workflow program\./
+const EXPLORE_DEVELOPER_INSTRUCTIONS_PATTERN =
+  /^You are a subagent inside a deterministic workflow program\.[\s\S]*\n\nAct as a read-only repository exploration agent\./
 const MISSING_AGENT_MESSAGE_PATTERN =
   /without an authoritative completed agent message/
+const WORKER_DEVELOPER_INSTRUCTIONS_PATTERN =
+  /deterministic workflow program[\s\S]*\n\nExecution-focused subagent/
+const AVAILABLE_AGENT_TYPES_PATTERN =
+  /available agent types: default, explorer, worker/
 
 type Message = Record<string, unknown>
 type Handler = (message: Message, process: FakeProcess) => void | Promise<void>
@@ -190,12 +199,7 @@ function makeSpawner(
 
 async function connectFake(
   next: Handler = () => undefined,
-  options: {
-    requestTimeoutMs?: number
-    turnTimeoutMs?: number
-    shutdownTimeoutMs?: number
-    requiredModels?: readonly string[]
-  } = {}
+  options: Omit<AppServerClientOptions, "spawn"> = {}
 ): Promise<{ client: AppServerClient; process: FakeProcess }> {
   const holder: { process?: FakeProcess } = {}
   const client = await AppServerClient.connect({
@@ -303,6 +307,68 @@ test("rejects early EOF, process exit, and request timeouts explicitly", async (
   await timeout.client.close()
 })
 
+test("retries thread/start exactly once after a timeout", async () => {
+  let threadStarts = 0
+  const { client, process } = await connectFake(
+    (message, fake) => {
+      if (message.method === "model/list" || message.method === "turn/start") {
+        agentHandler("retry-complete")(message, fake)
+        return
+      }
+      if (message.method !== "thread/start") {
+        return
+      }
+      threadStarts += 1
+      const response = {
+        id: message.id,
+        result: {
+          model: (message.params as Message).model,
+          thread: { id: "thread-1" }
+        }
+      }
+      if (threadStarts === 1) {
+        setTimeout(() => fake.respond(response), 30)
+      } else {
+        fake.respond(response)
+      }
+    },
+    {
+      requiredModels: ["gpt-5.6-luna"],
+      threadStartTimeoutMs: 10
+    }
+  )
+  await expect(client.agent("retry", { model: "gpt-5.6-luna" })).resolves.toBe(
+    "retry-complete"
+  )
+  expect(
+    process.messages.filter((message) => message.method === "thread/start")
+  ).toHaveLength(2)
+  await new Promise((resolve) => setTimeout(resolve, 35))
+  expect(client.status).toBe("ready")
+  await client.close()
+})
+
+test("fails with AppServerTimeoutError after two thread/start timeouts", async () => {
+  const { client, process } = await connectFake(
+    (message, fake) => {
+      if (message.method === "model/list") {
+        agentHandler("unused")(message, fake)
+      }
+    },
+    {
+      requiredModels: ["gpt-5.6-luna"],
+      threadStartTimeoutMs: 10
+    }
+  )
+  await expect(
+    client.agent("timeout", { model: "gpt-5.6-luna" })
+  ).rejects.toThrow(AppServerTimeoutError)
+  expect(
+    process.messages.filter((message) => message.method === "thread/start")
+  ).toHaveLength(2)
+  await client.close()
+})
+
 test("paginates model/list and asserts the required model IDs", async () => {
   const { client } = await connectFake(modelListHandler)
   const models = await client.listModels()
@@ -328,6 +394,150 @@ test("paginates model/list and asserts the required model IDs", async () => {
     AppServerModelError
   )
   await missing.client.close()
+})
+
+test("uses the default model unless an agent call overrides it", async () => {
+  const defaulted = await connectFake(agentHandler("defaulted"), {
+    defaultModel: "gpt-5.6-luna",
+    requiredModels: REQUIRED_APP_SERVER_MODELS
+  })
+  await expect(defaulted.client.agent("use default")).resolves.toBe("defaulted")
+  expect(
+    defaulted.process.messages.find(
+      (message) => message.method === "turn/start"
+    )?.params
+  ).toMatchObject({
+    developerInstructions: expect.stringMatching(
+      BASE_DEVELOPER_INSTRUCTIONS_PATTERN
+    ),
+    model: "gpt-5.6-luna"
+  })
+  await defaulted.client.close()
+
+  const overridden = await connectFake(agentHandler("overridden"), {
+    defaultModel: "gpt-5.6-luna",
+    requiredModels: REQUIRED_APP_SERVER_MODELS
+  })
+  await expect(
+    overridden.client.agent("use explicit", { model: "gpt-5.6-terra" })
+  ).resolves.toBe("overridden")
+  expect(
+    overridden.process.messages.find(
+      (message) => message.method === "turn/start"
+    )?.params
+  ).toMatchObject({ model: "gpt-5.6-terra" })
+  await overridden.client.close()
+
+  const missing = await connectFake(agentHandler("unused"), {
+    requiredModels: REQUIRED_APP_SERVER_MODELS
+  })
+  await expect(missing.client.agent("missing model")).rejects.toThrow(
+    AppServerModelError
+  )
+  await missing.client.close()
+})
+
+test("applies worker and explorer agent definitions to turn requests", async () => {
+  const worker = await connectFake(agentHandler("worker"), {
+    requiredModels: REQUIRED_APP_SERVER_MODELS
+  })
+  await worker.client.agent("implement", {
+    agentType: "worker",
+    model: "gpt-5.6-luna"
+  })
+  expect(
+    worker.process.messages.find((message) => message.method === "turn/start")
+      ?.params
+  ).toMatchObject({
+    developerInstructions: expect.stringMatching(
+      WORKER_DEVELOPER_INSTRUCTIONS_PATTERN
+    ),
+    sandboxPolicy: { type: "workspaceWrite" }
+  })
+  await worker.client.close()
+
+  const explorer = await connectFake(agentHandler("explorer"), {
+    requiredModels: REQUIRED_APP_SERVER_MODELS
+  })
+  await explorer.client.agent("inspect", {
+    agentType: "explorer",
+    model: "gpt-5.6-luna"
+  })
+  expect(
+    explorer.process.messages.find((message) => message.method === "turn/start")
+      ?.params
+  ).toMatchObject({
+    developerInstructions: expect.stringMatching(
+      EXPLORE_DEVELOPER_INSTRUCTIONS_PATTERN
+    ),
+    sandboxPolicy: { networkAccess: false, type: "readOnly" }
+  })
+  await explorer.client.close()
+})
+
+test("applies agent model and sandbox defaults below explicit call options", async () => {
+  const agentRegistry: NonNullable<
+    AppServerClientOptions["agentRegistry"]
+  > = async () => ({
+    description: "Injected",
+    developerInstructions: "Injected instructions",
+    model: "gpt-5.6-luna",
+    name: "injected",
+    sandbox: "workspace-write",
+    source: "project"
+  })
+  const supplied = await connectFake(agentHandler("supplied"), {
+    agentRegistry,
+    requiredModels: REQUIRED_APP_SERVER_MODELS
+  })
+  await expect(
+    supplied.client.agent("use definition", { agentType: "injected" })
+  ).resolves.toBe("supplied")
+  expect(
+    supplied.process.messages.find((message) => message.method === "turn/start")
+      ?.params
+  ).toMatchObject({
+    model: "gpt-5.6-luna",
+    sandboxPolicy: { type: "workspaceWrite" }
+  })
+  await supplied.client.close()
+
+  const explicit = await connectFake(agentHandler("explicit"), {
+    agentRegistry,
+    requiredModels: REQUIRED_APP_SERVER_MODELS
+  })
+  await explicit.client.agent("override definition", {
+    agentType: "injected",
+    model: "gpt-5.6-terra",
+    sandbox: "danger-full-access"
+  })
+  expect(
+    explicit.process.messages.find((message) => message.method === "turn/start")
+      ?.params
+  ).toMatchObject({
+    model: "gpt-5.6-terra",
+    sandboxPolicy: { type: "dangerFullAccess" }
+  })
+  await explicit.client.close()
+})
+
+test("rejects unknown agent types with the registry listing error", async () => {
+  const unknown = await connectFake(agentHandler("unused"), {
+    agentRegistry: () =>
+      Promise.reject(
+        new Error(
+          'unknown agent type "missing"; available agent types: default, explorer, worker'
+        )
+      ),
+    requiredModels: REQUIRED_APP_SERVER_MODELS
+  })
+  await expect(
+    unknown.client.agent("unknown", {
+      agentType: "missing",
+      model: "gpt-5.6-luna"
+    })
+  ).rejects.toThrow(AVAILABLE_AGENT_TYPES_PATTERN)
+  await unknown.client.close()
 })
 
 function agentHandler(text: string, status = "completed"): Handler {
@@ -401,7 +611,7 @@ test("resolves text only from authoritative completed item state and terminal co
     { requiredModels: REQUIRED_APP_SERVER_MODELS }
   )
   const call = await client.callAgent("return the final text", {
-    agentType: "Explore",
+    agentType: "explorer",
     label: "text-probe",
     model: "gpt-5.6-luna",
     phase: "Probe"
@@ -431,6 +641,9 @@ test("resolves text only from authoritative completed item state and terminal co
     process.messages.find((message) => message.method === "turn/start")?.params
   ).toMatchObject({
     approvalPolicy: "never",
+    developerInstructions: expect.stringMatching(
+      EXPLORE_DEVELOPER_INSTRUCTIONS_PATTERN
+    ),
     model: "gpt-5.6-luna",
     responsesapiClientMetadata: {
       workflow_label: "text-probe",
@@ -791,6 +1004,196 @@ test("throwing progress observers do not fail the App Server transport or active
   await client.close()
 })
 
+test("throwing raw subscribers are isolated from other subscribers and the transport", async () => {
+  const { client } = await connectFake(agentHandler("raw-observer-safe"), {
+    requiredModels: ["gpt-5.6-luna"]
+  })
+  const receivedMethods: string[] = []
+  client.subscribe(() => {
+    throw new Error("raw observer failure")
+  })
+  client.subscribe((notification) => {
+    receivedMethods.push(notification.method)
+  })
+
+  await expect(
+    client.agent("complete", { model: "gpt-5.6-luna" })
+  ).resolves.toBe("raw-observer-safe")
+  expect(receivedMethods).toContain("turn/completed")
+  expect(client.status).toBe("ready")
+  await client.close()
+})
+
+test("rejects server-initiated requests without disturbing the active agent", async () => {
+  const { client, process } = await connectFake(
+    (message, fake) => {
+      agentHandler("approval-safe")(message, fake)
+      if (message.method === "turn/start") {
+        fake.respond({ id: "approval-1", method: "item/approval", params: {} })
+      }
+    },
+    { requiredModels: ["gpt-5.6-luna"] }
+  )
+
+  await expect(
+    client.agent("complete", { model: "gpt-5.6-luna" })
+  ).resolves.toBe("approval-safe")
+  expect(
+    process.messages.find((message) => message.id === "approval-1")
+  ).toEqual({
+    error: {
+      code: -32_601,
+      message: "method not supported by gpt-workflow client: item/approval"
+    },
+    id: "approval-1",
+    jsonrpc: "2.0"
+  })
+  expect(client.status).toBe("ready")
+  await client.close()
+})
+
+test("drops late responses for timed-out requests while an agent remains active", async () => {
+  const { client } = await connectFake(
+    (message, process) => {
+      if (message.method === "slow") {
+        setTimeout(
+          () => process.respond({ id: message.id, result: "too late" }),
+          30
+        )
+        return
+      }
+      if (
+        message.method === "model/list" ||
+        message.method === "thread/start"
+      ) {
+        agentHandler("late-response-safe")(message, process)
+        return
+      }
+      if (message.method === "turn/start") {
+        const params = message.params as Message
+        const threadId = params.threadId as string
+        process.respond({ id: message.id, result: { turn: { id: "turn-1" } } })
+        setTimeout(() => {
+          process.respond({
+            method: "item/completed",
+            params: {
+              item: {
+                id: "item-1",
+                text: "late-response-safe",
+                type: "agentMessage"
+              },
+              threadId,
+              turnId: "turn-1"
+            }
+          })
+          process.respond({
+            method: "turn/completed",
+            params: {
+              threadId,
+              turn: { error: null, id: "turn-1", status: "completed" }
+            }
+          })
+        }, 50)
+      }
+    },
+    { requestTimeoutMs: 20, requiredModels: ["gpt-5.6-luna"] }
+  )
+
+  const slow = client.request("slow")
+  const agent = client.agent("complete", { model: "gpt-5.6-luna" })
+  await expect(slow).rejects.toThrow(AppServerTimeoutError)
+  await expect(agent).resolves.toBe("late-response-safe")
+  expect(client.status).toBe("ready")
+  await client.close()
+})
+
+test("interrupts a timed-out turn before rejecting it locally", async () => {
+  let interrupted = false
+  const { client, process } = await connectFake(
+    (message, fake) => {
+      if (
+        message.method === "model/list" ||
+        message.method === "thread/start"
+      ) {
+        agentHandler("unused")(message, fake)
+      } else if (message.method === "turn/start") {
+        fake.respond({
+          id: message.id,
+          result: { turn: { id: "turn-timeout" } }
+        })
+      } else if (message.method === "turn/interrupt") {
+        interrupted = true
+        fake.respond({ id: message.id, result: {} })
+      }
+    },
+    { requiredModels: ["gpt-5.6-luna"], turnTimeoutMs: 20 }
+  )
+
+  await expect(
+    client.agent("timeout", { model: "gpt-5.6-luna" })
+  ).rejects.toThrow(AppServerTimeoutError)
+  expect(interrupted).toBe(true)
+  expect(
+    process.messages.find((message) => message.method === "turn/interrupt")
+      ?.params
+  ).toEqual({ threadId: "thread-1", turnId: "turn-timeout" })
+  await client.close()
+})
+
+test("preserves token usage received immediately before turn completion", async () => {
+  const usage = {
+    last: { totalTokens: 7 },
+    modelContextWindow: 1000,
+    total: { totalTokens: 23 }
+  }
+  const { client } = await connectFake(
+    (message, process) => {
+      if (
+        message.method === "model/list" ||
+        message.method === "thread/start"
+      ) {
+        agentHandler("unused")(message, process)
+      } else if (message.method === "turn/start") {
+        process.respond({
+          id: message.id,
+          result: { turn: { id: "turn-usage" } }
+        })
+        queueMicrotask(() => {
+          process.respond({
+            method: "item/completed",
+            params: {
+              item: { id: "item-usage", text: "used", type: "agentMessage" },
+              threadId: "thread-1",
+              turnId: "turn-usage"
+            }
+          })
+          process.respond({
+            method: "thread/tokenUsage/updated",
+            params: {
+              threadId: "thread-1",
+              tokenUsage: usage,
+              turnId: "turn-usage"
+            }
+          })
+          process.respond({
+            method: "turn/completed",
+            params: {
+              threadId: "thread-1",
+              turn: { error: null, id: "turn-usage", status: "completed" }
+            }
+          })
+        })
+      }
+    },
+    { requiredModels: ["gpt-5.6-luna"] }
+  )
+
+  await expect(
+    client.callAgent("complete", { model: "gpt-5.6-luna" })
+  ).resolves.toMatchObject({ evidence: { usage } })
+  await client.close()
+})
+
 test("steers the exact active turn and rejects steering after authoritative terminal completion", async () => {
   const steerMessages: Message[] = []
   const { client, process: connectedProcess } = await connectFake(
@@ -1006,6 +1409,7 @@ test("interrupts one sibling turn without cancelling the other", async () => {
 
 test("parses and validates nested structured output, including enums, integers, and item limits", async () => {
   const schema = {
+    additionalProperties: true,
     properties: {
       age: { maximum: 99, minimum: 1, type: "integer" },
       name: { type: "string" },
@@ -1029,6 +1433,7 @@ test("parses and validates nested structured output, including enums, integers, 
     agentHandler(
       JSON.stringify({
         age: 37,
+        extra: "locally allowed",
         name: "Ada",
         nested: { enabled: true },
         tags: ["math"],
@@ -1043,46 +1448,135 @@ test("parses and validates nested structured output, including enums, integers, 
   })
   expect(result).toEqual({
     age: 37,
+    extra: "locally allowed",
     name: "Ada",
     nested: { enabled: true },
     tags: ["math"],
     tier: "pro"
   })
-  expect(
-    process.messages.find((message) => message.method === "turn/start")?.params
-  ).toMatchObject({
-    outputSchema: {
-      additionalProperties: false,
-      properties: {
-        nested: { additionalProperties: false }
-      }
-    }
+  const wireSchema = (
+    process.messages.find((message) => message.method === "turn/start")
+      ?.params as Message
+  ).outputSchema as Message
+  expect(wireSchema.additionalProperties).toBe(false)
+  expect((wireSchema.properties as Message).nested).toMatchObject({
+    additionalProperties: false
   })
   await client.close()
 })
 
-test("rejects malformed JSON and schema-invalid authoritative results", async () => {
+function structuredRetryHandler(replies: readonly string[]): Handler {
+  let turnCount = 0
+  return (message, process) => {
+    if (message.method === "model/list") {
+      process.respond({
+        id: message.id,
+        result: {
+          data: REQUIRED_APP_SERVER_MODELS.map((model) => ({
+            id: model,
+            model
+          })),
+          nextCursor: null
+        }
+      })
+      return
+    }
+    if (message.method === "thread/start") {
+      process.respond({
+        id: message.id,
+        result: {
+          model: (message.params as Message).model,
+          thread: { id: "thread-retry" }
+        }
+      })
+      return
+    }
+    if (message.method !== "turn/start") {
+      return
+    }
+    turnCount += 1
+    const turnId = `turn-${turnCount}`
+    const text = replies[turnCount - 1] ?? replies.at(-1) ?? "not-json"
+    process.respond({ id: message.id, result: { turn: { id: turnId } } })
+    queueMicrotask(() => {
+      process.respond({
+        method: "item/completed",
+        params: {
+          item: { id: `item-${turnCount}`, text, type: "agentMessage" },
+          threadId: "thread-retry",
+          turnId
+        }
+      })
+      process.respond({
+        method: "turn/completed",
+        params: {
+          threadId: "thread-retry",
+          turn: { error: null, id: turnId, status: "completed" }
+        }
+      })
+    })
+  }
+}
+
+test("retries invalid structured output on the same thread", async () => {
   const schema = {
     properties: { count: { minimum: 2, type: "integer" } },
     required: ["count"],
     type: "object"
   }
-  const invalidJson = await connectFake(agentHandler("not-json"), {
-    requiredModels: REQUIRED_APP_SERVER_MODELS
-  })
-  await expect(
-    invalidJson.client.agent("bad JSON", { model: "gpt-5.6-terra", schema })
-  ).rejects.toThrow(AppServerResultError)
-  await invalidJson.client.close()
-
-  const invalidSchema = await connectFake(
-    agentHandler(JSON.stringify({ count: 1 })),
-    { requiredModels: REQUIRED_APP_SERVER_MODELS }
+  const corrected = await connectFake(
+    structuredRetryHandler(["not-json", JSON.stringify({ count: 2 })]),
+    {
+      requiredModels: REQUIRED_APP_SERVER_MODELS
+    }
   )
   await expect(
-    invalidSchema.client.agent("bad schema", { model: "gpt-5.6-terra", schema })
-  ).rejects.toThrow(SCHEMA_VALIDATION_PATTERN)
-  await invalidSchema.client.close()
+    corrected.client.agent("correct JSON", {
+      effort: "high",
+      model: "gpt-5.6-terra",
+      schema
+    })
+  ).resolves.toEqual({ count: 2 })
+  const turns = corrected.process.messages.filter(
+    (message) => message.method === "turn/start"
+  )
+  expect(turns).toHaveLength(2)
+  expect(turns.map((turn) => (turn.params as Message).threadId)).toEqual([
+    "thread-retry",
+    "thread-retry"
+  ])
+  expect(turns[1]?.params).toMatchObject({
+    effort: "high",
+    model: "gpt-5.6-terra",
+    outputSchema: { additionalProperties: false }
+  })
+  expect(
+    ((turns[1]?.params as Message).input as Message[])[0]?.text as string
+  ).toContain("not valid JSON")
+  await corrected.client.close()
+})
+
+test("rejects structured output after two corrective turns", async () => {
+  const schema = {
+    properties: { count: { minimum: 2, type: "integer" } },
+    required: ["count"],
+    type: "object"
+  }
+  const invalid = await connectFake(structuredRetryHandler(["not-json"]), {
+    requiredModels: REQUIRED_APP_SERVER_MODELS
+  })
+  const result = invalid.client.agent("bad JSON", {
+    model: "gpt-5.6-terra",
+    schema
+  })
+  await expect(result).rejects.toThrow(AppServerResultError)
+  await expect(result).rejects.toThrow(RETRIES_EXHAUSTED_PATTERN)
+  expect(
+    invalid.process.messages.filter(
+      (message) => message.method === "turn/start"
+    )
+  ).toHaveLength(3)
+  await invalid.client.close()
 })
 
 test("never reports failed or interrupted turns as successful agent results", async () => {

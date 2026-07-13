@@ -13,11 +13,13 @@ test("publishes only the deliberate runtime and App Server values", () => {
     "AppServerResultError",
     "AppServerTimeoutError",
     "AppServerTurnError",
+    "BUILTIN_AGENT_DEFINITIONS",
     "JSONBoundaryError",
     "REQUIRED_APP_SERVER_MODELS",
     "WorkflowLoadError",
     "parseWorkflowJournalEntry",
     "parseWorkflowScript",
+    "resolveAgentType",
     "runWorkflowScript"
   ])
 })

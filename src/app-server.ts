@@ -1,11 +1,18 @@
 import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
-import { Ajv, type AnySchema } from "ajv"
+import { Ajv, type AnySchema, type ValidateFunction } from "ajv"
+import { type AgentDefinition, resolveAgentType } from "./agent-registry.js"
 
 const SENSITIVE_EVENT_KEY =
   /(?:authorization|api[-_]?key|access[-_]?token|cookie|password|secret|environment)/i
 const SENSITIVE_EVENT_EXACT_KEY = /^(?:token|env)$/i
 const TRAILING_CARRIAGE_RETURN = /\r$/
+const SUBAGENT_DEVELOPER_INSTRUCTIONS =
+  "You are a subagent inside a deterministic workflow program. Your final message is consumed verbatim as a return value by the orchestrating program; it is never shown to a human. Return only the requested data — no preamble, no commentary, and no markdown fences unless the prompt asks for them."
+const MAX_STRUCTURED_OUTPUT_RETRIES = 2
+const MAX_TIMED_OUT_REQUEST_IDS = 256
+const INTERRUPT_TIMEOUT_MS = 2000
+const SIGKILL_EXIT_TIMEOUT_MS = 2000
 
 export type AppServerJSONPrimitive = string | number | boolean | null
 export type AppServerJSONValue =
@@ -52,16 +59,22 @@ export type AppServerSpawner = (options: {
 }) => AppServerProcess
 
 export type AppServerClientOptions = {
+  agentRegistry?: (
+    agentType: string,
+    options: { cwd?: string }
+  ) => Promise<AgentDefinition>
   args?: string[]
   clientInfo?: Partial<AppServerClientInfo>
   command?: string
   cwd?: string
+  defaultModel?: string
   env?: Record<string, string | undefined>
   now?: () => number
   requestTimeoutMs?: number
   requiredModels?: readonly string[]
   shutdownTimeoutMs?: number
   spawn?: AppServerSpawner
+  threadStartTimeoutMs?: number
   turnTimeoutMs?: number
 }
 
@@ -758,11 +771,15 @@ type AgentExecutionState =
 
 type AgentExecution = {
   readonly agentId: string
+  readonly approvalPolicy: string
   readonly completedItems: Array<{ id: string; text: string }>
+  readonly cwd: string | undefined
+  readonly developerInstructions: string
   readonly eventBuffer: AsyncEventBuffer
   readonly eventListeners: Set<AppServerNormalizedEventListener>
   readonly eventSink: AppServerNormalizedEventListener | undefined
   readonly eventTimestamp: () => number
+  readonly effort: string | undefined
   interruptPromise: Promise<void> | null
   readonly itemIds: string[]
   readonly label: string | null
@@ -773,11 +790,15 @@ type AgentExecution = {
   resolveResult: (call: AppServerAgentCall) => void
   resultPromise: Promise<AppServerAgentCall>
   readonly schema: AppServerJSONObject | undefined
+  readonly schemaValidator: ValidateFunction | undefined
+  readonly sandbox: "read-only" | "workspace-write" | "danger-full-access"
   settled: boolean
   state: AgentExecutionState
   terminalError: string | null
   terminalStatus: string | null
   readonly threadId: string
+  structuredOutputRetries: number
+  turnTimeout: ReturnType<typeof setTimeout> | null
   turnId: string | null
   turnStartedEmitted: boolean
   usage: AppServerJSONValue | null
@@ -876,6 +897,7 @@ export class AppServerClient {
 
   private readonly process: AppServerProcess
   private readonly requestTimeoutMs: number
+  private readonly threadStartTimeoutMs: number
   private readonly turnTimeoutMs: number
   private readonly shutdownTimeoutMs: number
   private readonly listeners = new Set<AppServerNotificationListener>()
@@ -883,7 +905,9 @@ export class AppServerClient {
     new Set<AppServerNormalizedEventListener>()
   private readonly failureListeners = new Set<(error: AppServerError) => void>()
   private readonly pending = new Map<string | number, PendingRequest>()
+  private readonly timedOutRequestIds = new Set<string | number>()
   private readonly agents = new Map<string, AgentExecution>()
+  private readonly lastUsageByThread = new Map<string, AppServerJSONValue>()
   private readonly availableModels = new Map<string, AppServerModel>()
   private nextRequestId = 1
   private state: "starting" | "ready" | "closing" | "closed" | "failed" =
@@ -907,6 +931,7 @@ export class AppServerClient {
     this.options = options
     this.initialized = false
     this.requestTimeoutMs = options.requestTimeoutMs ?? 30_000
+    this.threadStartTimeoutMs = options.threadStartTimeoutMs ?? 120_000
     this.turnTimeoutMs = options.turnTimeoutMs ?? 120_000
     this.shutdownTimeoutMs = options.shutdownTimeoutMs ?? 500
     this.exitPromise = new Promise((resolve) => {
@@ -996,9 +1021,17 @@ export class AppServerClient {
     return () => this.normalizedListeners.delete(listener)
   }
 
-  async request(
+  request(
     method: string,
     params: AppServerJSONValue | undefined = {}
+  ): Promise<unknown> {
+    return this.requestWithTimeout(method, params, this.requestTimeoutMs)
+  }
+
+  private async requestWithTimeout(
+    method: string,
+    params: AppServerJSONValue | undefined,
+    timeoutMs: number
   ): Promise<unknown> {
     if (method === "initialize" && this.initialized) {
       throw new AppServerProtocolError("initialize may only be sent once")
@@ -1023,12 +1056,13 @@ export class AppServerClient {
     const pending = new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id)
+        this.rememberTimedOutRequestId(id)
         reject(
           new AppServerTimeoutError(
-            `${method} request ${id} timed out after ${this.requestTimeoutMs}ms`
+            `${method} request ${id} timed out after ${timeoutMs}ms`
           )
         )
-      }, this.requestTimeoutMs)
+      }, timeoutMs)
       this.pending.set(id, { method, reject, resolve, timer })
     })
 
@@ -1051,6 +1085,17 @@ export class AppServerClient {
       )
     }
     return pending
+  }
+
+  private rememberTimedOutRequestId(id: string | number): void {
+    this.timedOutRequestIds.add(id)
+    if (this.timedOutRequestIds.size <= MAX_TIMED_OUT_REQUEST_IDS) {
+      return
+    }
+    const oldestId = this.timedOutRequestIds.values().next().value
+    if (oldestId !== undefined) {
+      this.timedOutRequestIds.delete(oldestId)
+    }
   }
 
   async listModels(): Promise<AppServerModel[]> {
@@ -1111,14 +1156,15 @@ export class AppServerClient {
     prompt: string,
     options: AppServerAgentOptions = {}
   ): Promise<AppServerAgentHandle> {
-    const { approvalPolicy, cwd, model, sandbox, threadResult } =
-      await this.prepareAgent(prompt, options)
+    const prepared = await this.prepareAgent(prompt, options)
+    const { model, threadResult } = prepared
     const workflowRunId = options.workflowRunId ?? `workflow-${randomUUID()}`
     const agentId = options.agentId ?? `agent-${randomUUID()}`
     const execution = this.createAgentExecution(
       agentId,
       model,
       options,
+      prepared,
       threadResult,
       workflowRunId
     )
@@ -1147,58 +1193,8 @@ export class AppServerClient {
         subject: "thread",
         type: "lifecycle"
       })
-      const turnResultResponse = readTurnStartResult(
-        await this.request("turn/start", {
-          input: [{ text: prompt, text_elements: [], type: "text" }],
-          model,
-          threadId: threadResult.threadId,
-          ...(cwd === undefined ? {} : { cwd }),
-          approvalPolicy,
-          sandboxPolicy: sandboxPolicyFor(sandbox, cwd),
-          ...(options.effort === undefined ? {} : { effort: options.effort }),
-          ...(options.schema === undefined
-            ? {}
-            : { outputSchema: normalizeOutputSchema(options.schema) }),
-          ...(options.label === undefined && options.phase === undefined
-            ? {}
-            : {
-                responsesapiClientMetadata: {
-                  ...(options.label === undefined
-                    ? {}
-                    : { workflow_label: options.label }),
-                  ...(options.phase === undefined
-                    ? {}
-                    : { workflow_phase: options.phase })
-                }
-              })
-        })
-      )
-      if (
-        execution.turnId !== null &&
-        execution.turnId !== turnResultResponse.turnId
-      ) {
-        throw new AppServerProtocolError(
-          `turn/start response id ${turnResultResponse.turnId} disagrees with active turn ${execution.turnId}`
-        )
-      }
-      execution.turnId = turnResultResponse.turnId
-      this.emitTurnStartedIfNeeded(
-        execution,
-        turnResultResponse.turnId,
-        "turn/start"
-      )
-      if (execution.state === "starting") {
-        execution.state = "active"
-      }
-      if (this.lastAgentAttempt?.threadId === threadResult.threadId) {
-        this.lastAgentAttempt.turnId = execution.turnId
-      }
-      withTimeout(
-        execution.resultPromise,
-        this.turnTimeoutMs,
-        `turn ${execution.turnId} timed out after ${this.turnTimeoutMs}ms`
-      ).catch((error: unknown) => this.failAgent(execution, error))
-      this.maybeFinishAgent(execution, options)
+      await this.startExecutionTurn(execution, prompt)
+      this.maybeFinishAgent(execution)
       return handle
     } catch (error) {
       this.failAgent(execution, error)
@@ -1212,6 +1208,8 @@ export class AppServerClient {
   ): Promise<{
     approvalPolicy: string
     cwd: string | undefined
+    developerInstructions: string
+    effort: string | undefined
     model: string
     sandbox: "read-only" | "workspace-write" | "danger-full-access"
     threadResult: { model: string; threadId: string }
@@ -1219,7 +1217,16 @@ export class AppServerClient {
     if (typeof prompt !== "string") {
       throw new TypeError("agent() prompt must be a string")
     }
-    const { model } = options
+    const cwd = options.cwd ?? this.options.cwd
+    const agentDefinition =
+      options.agentType === undefined
+        ? undefined
+        : await (this.options.agentRegistry ?? resolveAgentType)(
+            options.agentType,
+            { cwd }
+          )
+    const model =
+      options.model ?? agentDefinition?.model ?? this.options.defaultModel
     if (!model) {
       throw new AppServerModelError("agent() requires an explicit model")
     }
@@ -1230,36 +1237,71 @@ export class AppServerClient {
       throw new AppServerModelError(`agent() model is not available: ${model}`)
     }
 
-    const cwd = options.cwd ?? this.options.cwd
     const approvalPolicy = options.approvalPolicy ?? "never"
-    const sandbox = options.sandbox ?? "read-only"
+    const sandbox = options.sandbox ?? agentDefinition?.sandbox ?? "read-only"
+    const effort = options.effort ?? agentDefinition?.effort
+    const resolvedDeveloperInstructions = developerInstructions(agentDefinition)
     const threadResult = readThreadStartResult(
-      await this.request("thread/start", {
+      await this.startThread({
         approvalPolicy,
+        developerInstructions: resolvedDeveloperInstructions,
         ephemeral: true,
         model,
         sandbox,
-        ...(options.agentType === undefined
-          ? {}
-          : {
-              developerInstructions: agentTypeInstructions(options.agentType)
-            }),
         ...(cwd === undefined ? {} : { cwd })
       })
     )
-    return { approvalPolicy, cwd, model, sandbox, threadResult }
+    return {
+      approvalPolicy,
+      cwd,
+      developerInstructions: resolvedDeveloperInstructions,
+      effort,
+      model,
+      sandbox,
+      threadResult
+    }
+  }
+
+  private async startThread(params: AppServerJSONObject): Promise<unknown> {
+    try {
+      return await this.requestWithTimeout(
+        "thread/start",
+        params,
+        this.threadStartTimeoutMs
+      )
+    } catch (error) {
+      if (!(error instanceof AppServerTimeoutError)) {
+        throw error
+      }
+      return this.requestWithTimeout(
+        "thread/start",
+        params,
+        this.threadStartTimeoutMs
+      )
+    }
   }
 
   private createAgentExecution(
     agentId: string,
     model: string,
     options: AppServerAgentOptions,
+    prepared: {
+      approvalPolicy: string
+      cwd: string | undefined
+      developerInstructions: string
+      effort: string | undefined
+      sandbox: "read-only" | "workspace-write" | "danger-full-access"
+    },
     threadResult: { model: string; threadId: string },
     workflowRunId: string
   ): AgentExecution {
     const execution: AgentExecution = {
       agentId,
+      approvalPolicy: prepared.approvalPolicy,
       completedItems: [],
+      cwd: prepared.cwd,
+      developerInstructions: prepared.developerInstructions,
+      effort: prepared.effort,
       eventBuffer: new AsyncEventBuffer(),
       eventListeners: new Set(),
       eventSink: options.eventSink,
@@ -1276,14 +1318,23 @@ export class AppServerClient {
       resultPromise: Promise.resolve(
         undefined as unknown as AppServerAgentCall
       ),
+      sandbox: prepared.sandbox,
       schema: options.schema,
+      schemaValidator:
+        options.schema === undefined
+          ? undefined
+          : new Ajv({ allErrors: true, strict: false }).compile(
+              options.schema as AnySchema
+            ),
       settled: false,
       state: "starting",
+      structuredOutputRetries: 0,
       terminalError: null,
       terminalStatus: null,
       threadId: threadResult.threadId,
       turnId: null,
       turnStartedEmitted: false,
+      turnTimeout: null,
       usage: null,
       workflowRunId
     }
@@ -1294,6 +1345,90 @@ export class AppServerClient {
       }
     )
     return execution
+  }
+
+  private async startExecutionTurn(
+    execution: AgentExecution,
+    input: string
+  ): Promise<void> {
+    if (execution.turnTimeout !== null) {
+      clearTimeout(execution.turnTimeout)
+    }
+    execution.completedItems.length = 0
+    execution.state = "active"
+    execution.terminalError = null
+    execution.terminalStatus = null
+    execution.turnId = null
+    execution.turnStartedEmitted = false
+    const turnResultResponse = readTurnStartResult(
+      await this.request("turn/start", {
+        approvalPolicy: execution.approvalPolicy,
+        developerInstructions: execution.developerInstructions,
+        input: [{ text: input, text_elements: [], type: "text" }],
+        model: execution.requestedModel,
+        sandboxPolicy: sandboxPolicyFor(execution.sandbox, execution.cwd),
+        threadId: execution.threadId,
+        ...(execution.cwd === undefined ? {} : { cwd: execution.cwd }),
+        ...(execution.effort === undefined ? {} : { effort: execution.effort }),
+        ...(execution.schema === undefined
+          ? {}
+          : { outputSchema: normalizeOutputSchema(execution.schema) }),
+        ...(execution.label === null && execution.phase === null
+          ? {}
+          : {
+              responsesapiClientMetadata: {
+                ...(execution.label === null
+                  ? {}
+                  : { workflow_label: execution.label }),
+                ...(execution.phase === null
+                  ? {}
+                  : { workflow_phase: execution.phase })
+              }
+            })
+      })
+    )
+    if (
+      execution.turnId !== null &&
+      execution.turnId !== turnResultResponse.turnId
+    ) {
+      throw new AppServerProtocolError(
+        `turn/start response id ${turnResultResponse.turnId} disagrees with active turn ${execution.turnId}`
+      )
+    }
+    execution.turnId = turnResultResponse.turnId
+    this.emitTurnStartedIfNeeded(
+      execution,
+      turnResultResponse.turnId,
+      "turn/start"
+    )
+    if (this.lastAgentAttempt?.threadId === execution.threadId) {
+      this.lastAgentAttempt.turnId = execution.turnId
+      this.lastAgentAttempt.terminalStatus = null
+    }
+    execution.turnTimeout = setTimeout(() => {
+      const error = new AppServerTimeoutError(
+        `turn ${execution.turnId} timed out after ${this.turnTimeoutMs}ms`
+      )
+      this.interruptTimedOutTurn(execution).finally(() =>
+        this.failAgent(execution, error)
+      )
+    }, this.turnTimeoutMs)
+  }
+
+  private async interruptTimedOutTurn(
+    execution: AgentExecution
+  ): Promise<void> {
+    if (execution.turnId === null) {
+      return
+    }
+    await withTimeout(
+      this.request("turn/interrupt", {
+        threadId: execution.threadId,
+        turnId: execution.turnId
+      }),
+      INTERRUPT_TIMEOUT_MS,
+      `timed out interrupting turn ${execution.turnId}`
+    ).catch(() => undefined)
   }
 
   async callAgent(
@@ -1417,10 +1552,7 @@ export class AppServerClient {
     return execution.interruptPromise
   }
 
-  private maybeFinishAgent(
-    execution: AgentExecution,
-    options: AppServerAgentOptions
-  ): void {
+  private maybeFinishAgent(execution: AgentExecution): void {
     if (
       execution.settled ||
       execution.terminalStatus === null ||
@@ -1428,9 +1560,13 @@ export class AppServerClient {
     ) {
       return
     }
-    execution.settled = true
+    if (execution.turnTimeout !== null) {
+      clearTimeout(execution.turnTimeout)
+      execution.turnTimeout = null
+    }
     const { turnId } = execution
     if (execution.terminalStatus !== "completed") {
+      execution.settled = true
       execution.state = "failed"
       const detail = execution.terminalError
         ? `: ${execution.terminalError}`
@@ -1443,10 +1579,19 @@ export class AppServerClient {
       )
       execution.eventBuffer.close()
       this.agents.delete(execution.threadId)
+      this.lastUsageByThread.delete(execution.threadId)
       return
     }
     const finalItem = execution.completedItems.at(-1)
     if (!finalItem) {
+      if (execution.schema !== undefined) {
+        this.retryStructuredOutput(
+          execution,
+          `turn ${turnId} completed without an authoritative completed agent message`
+        )
+        return
+      }
+      execution.settled = true
       execution.state = "failed"
       execution.rejectResult(
         new AppServerResultError(
@@ -1455,13 +1600,19 @@ export class AppServerClient {
       )
       execution.eventBuffer.close()
       this.agents.delete(execution.threadId)
+      this.lastUsageByThread.delete(execution.threadId)
       return
     }
     try {
       const result =
-        options.schema === undefined
+        execution.schemaValidator === undefined
           ? finalItem.text
-          : parseAndValidateStructuredResult(finalItem.text, options.schema)
+          : parseAndValidateStructuredResult(
+              finalItem.text,
+              execution.schemaValidator
+            )
+      const usage =
+        execution.usage ?? this.lastUsageByThread.get(execution.threadId)
       const evidence: AppServerAgentEvidence = {
         itemIds: [...execution.itemIds],
         requestedModel: execution.requestedModel,
@@ -1469,19 +1620,52 @@ export class AppServerClient {
         terminalStatus: "completed",
         threadId: execution.threadId,
         turnId,
-        ...(execution.usage === null ? {} : { usage: execution.usage })
+        ...(usage === undefined ? {} : { usage })
       }
       const call = { evidence, result } satisfies AppServerAgentCall
       this.lastAgentEvidence = evidence
+      execution.settled = true
       execution.state = "completed"
       execution.resolveResult(call)
     } catch (error) {
+      if (error instanceof AppServerResultError) {
+        this.retryStructuredOutput(execution, error.message)
+        return
+      }
+      execution.settled = true
       execution.state = "failed"
       execution.rejectResult(error)
     } finally {
+      if (execution.settled) {
+        this.lastUsageByThread.delete(execution.threadId)
+        execution.eventBuffer.close()
+        this.agents.delete(execution.threadId)
+      }
+    }
+  }
+
+  private retryStructuredOutput(
+    execution: AgentExecution,
+    details: string
+  ): void {
+    if (execution.structuredOutputRetries >= MAX_STRUCTURED_OUTPUT_RETRIES) {
+      execution.settled = true
+      execution.state = "failed"
+      execution.rejectResult(
+        new AppServerResultError(
+          `structured output validation retries were exhausted: ${details}`
+        )
+      )
       execution.eventBuffer.close()
       this.agents.delete(execution.threadId)
+      this.lastUsageByThread.delete(execution.threadId)
+      return
     }
+    execution.structuredOutputRetries += 1
+    const prompt = `Your previous reply was not valid against the required JSON schema. Errors: ${details}. Reply with ONLY the corrected JSON object — no prose, no fences.`
+    this.startExecutionTurn(execution, prompt).catch((error: unknown) =>
+      this.failAgent(execution, error)
+    )
   }
 
   private failAgent(execution: AgentExecution, error: unknown): void {
@@ -1489,10 +1673,15 @@ export class AppServerClient {
       return
     }
     execution.settled = true
+    if (execution.turnTimeout !== null) {
+      clearTimeout(execution.turnTimeout)
+      execution.turnTimeout = null
+    }
     execution.state = "failed"
     execution.rejectResult(error)
     execution.eventBuffer.close()
     this.agents.delete(execution.threadId)
+    this.lastUsageByThread.delete(execution.threadId)
   }
 
   private emitEvent(
@@ -1601,6 +1790,7 @@ export class AppServerClient {
     for (const execution of this.agents.values()) {
       this.failAgent(execution, error)
     }
+    this.lastUsageByThread.clear()
     try {
       this.process.stdin.end()
     } catch {
@@ -1623,6 +1813,11 @@ export class AppServerClient {
       } catch {
         /* already exited */
       }
+      await withTimeout(
+        this.exitPromise,
+        SIGKILL_EXIT_TIMEOUT_MS,
+        "timed out waiting for App Server exit after SIGKILL"
+      ).catch(() => undefined)
     }
     this.state = "closed"
     this.resolveExit()
@@ -1745,6 +1940,10 @@ export class AppServerClient {
   private dispatchLine(line: string): void {
     const value = this.parseProtocolLine(line)
     if (Object.hasOwn(value, "id")) {
+      if (typeof value.method === "string") {
+        this.dispatchServerRequest(value)
+        return
+      }
       this.dispatchResponse(value)
       return
     }
@@ -1755,9 +1954,39 @@ export class AppServerClient {
     }
     const notification = { method: value.method, params: value.params }
     for (const listener of this.listeners) {
-      listener(notification)
+      try {
+        listener(notification)
+      } catch {
+        /* listener failures are isolated from the transport */
+      }
     }
     this.routeNormalizedNotification(notification)
+  }
+
+  private dispatchServerRequest(value: RecordValue): void {
+    if (!isRequestId(value.id)) {
+      throw new AppServerProtocolError(
+        "App Server request id must be a string or safe integer"
+      )
+    }
+    const method = value.method as string
+    this.writeMessage({
+      error: {
+        code: -32_601,
+        message: `method not supported by gpt-workflow client: ${method}`
+      },
+      id: value.id,
+      jsonrpc: "2.0"
+    }).catch((error: unknown) =>
+      this.failConnection(
+        error instanceof AppServerError
+          ? error
+          : new AppServerProcessError(
+              `failed to reject App Server request ${method}: ${describeError(error)}`,
+              { cause: error }
+            )
+      )
+    )
   }
 
   private parseProtocolLine(line: string): RecordValue {
@@ -1796,6 +2025,9 @@ export class AppServerClient {
     }
     const pending = this.pending.get(value.id)
     if (!pending) {
+      if (this.timedOutRequestIds.delete(value.id)) {
+        return
+      }
       throw new AppServerProtocolError(
         `App Server response ${String(value.id)} has no pending request`
       )
@@ -1825,6 +2057,7 @@ export class AppServerClient {
   private routeNormalizedNotification(
     notification: AppServerNotification
   ): void {
+    this.rememberUsageNotification(notification)
     const context = this.activeNotificationContext(notification.params)
     if (context === null) {
       return
@@ -2033,6 +2266,17 @@ export class AppServerClient {
     }
   }
 
+  private rememberUsageNotification(notification: AppServerNotification): void {
+    if (notification.method !== "thread/tokenUsage/updated") {
+      return
+    }
+    const params = recordOrEmpty(notification.params)
+    const { threadId } = notificationIds(notification.params)
+    if (threadId !== null && this.agents.has(threadId)) {
+      this.lastUsageByThread.set(threadId, asJSONValue(params.tokenUsage) ?? {})
+    }
+  }
+
   private activeNotificationContext(params: unknown): {
     execution: AgentExecution
     ids: ReturnType<typeof notificationIds>
@@ -2089,7 +2333,7 @@ export class AppServerClient {
       },
       { threadId: completed.threadId, turnId: completed.turn.id }
     )
-    this.maybeFinishAgent(execution, this.agentOptionsFor(execution))
+    this.maybeFinishAgent(execution)
   }
 
   private routeItemLifecycle(
@@ -2166,18 +2410,7 @@ export class AppServerClient {
       )
     }
     if (notification.method === "item/completed") {
-      this.maybeFinishAgent(execution, this.agentOptionsFor(execution))
-    }
-  }
-
-  private agentOptionsFor(execution: AgentExecution): AppServerAgentOptions {
-    return {
-      agentId: execution.agentId,
-      label: execution.label ?? undefined,
-      model: execution.requestedModel,
-      phase: execution.phase ?? undefined,
-      schema: execution.schema,
-      workflowRunId: execution.workflowRunId
+      this.maybeFinishAgent(execution)
     }
   }
 
@@ -2212,11 +2445,38 @@ export class AppServerClient {
   }
 }
 
-function agentTypeInstructions(agentType: string): string {
-  if (agentType.toLowerCase() === "explore") {
-    return "Act as a read-only repository exploration agent. Do not edit files. When searching, include hidden and ignored directories where relevant (for example, use fd -H -I). Verify filesystem claims with tools before answering."
+function developerInstructions(
+  agentDefinition: AgentDefinition | undefined
+): string {
+  if (agentDefinition === undefined) {
+    return SUBAGENT_DEVELOPER_INSTRUCTIONS
   }
-  return `Act as the ${agentType} repository subagent requested by the parent workflow.`
+  return `${SUBAGENT_DEVELOPER_INSTRUCTIONS}\n\n${agentDefinition.developerInstructions}`
+}
+
+function normalizeOutputSchema(
+  schema: AppServerJSONObject
+): AppServerJSONObject {
+  return normalizeSchemaNode(structuredClone(schema)) as AppServerJSONObject
+}
+
+function normalizeSchemaNode(value: AppServerJSONValue): AppServerJSONValue {
+  if (Array.isArray(value)) {
+    return value.map(normalizeSchemaNode)
+  }
+  if (value === null || typeof value !== "object") {
+    return value
+  }
+  const normalized = Object.fromEntries(
+    Object.entries(value).map(([key, child]) => [
+      key,
+      normalizeSchemaNode(child)
+    ])
+  )
+  if (value.type === "object" || Object.hasOwn(value, "properties")) {
+    normalized.additionalProperties = false
+  }
+  return normalized
 }
 
 function sandboxPolicyFor(
@@ -2243,7 +2503,7 @@ function sandboxPolicyFor(
 
 function parseAndValidateStructuredResult(
   text: string,
-  schema: AppServerJSONObject
+  validator: ValidateFunction
 ): AppServerJSONValue {
   let value: unknown
   try {
@@ -2254,9 +2514,6 @@ function parseAndValidateStructuredResult(
       { cause: error }
     )
   }
-  const validator = new Ajv({ allErrors: true, strict: false }).compile(
-    schema as AnySchema
-  )
   if (!validator(value)) {
     const details =
       validator.errors
@@ -2270,24 +2527,4 @@ function parseAndValidateStructuredResult(
     )
   }
   return value as AppServerJSONValue
-}
-
-function normalizeOutputSchema(value: AppServerJSONValue): AppServerJSONValue {
-  if (Array.isArray(value)) {
-    return value.map(normalizeOutputSchema)
-  }
-  if (value === null || typeof value !== "object") {
-    return value
-  }
-
-  const normalized = Object.fromEntries(
-    Object.entries(value).map(([key, child]) => [
-      key,
-      normalizeOutputSchema(child)
-    ])
-  ) as AppServerJSONObject
-  if (normalized.type === "object" || normalized.properties !== undefined) {
-    normalized.additionalProperties = false
-  }
-  return normalized
 }

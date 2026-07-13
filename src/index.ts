@@ -1,3 +1,9 @@
+export type { AgentDefinition } from "./agent-registry.js"
+// biome-ignore lint/performance/noBarrelFile: This is the deliberate public package entrypoint.
+export {
+  BUILTIN_AGENT_DEFINITIONS,
+  resolveAgentType
+} from "./agent-registry.js"
 export type {
   AppServerAgentAttemptEvidence,
   AppServerAgentCall,
@@ -25,7 +31,6 @@ export type {
   AppServerTextInput,
   AppServerWritable
 } from "./app-server.js"
-// biome-ignore lint/performance/noBarrelFile: This is the deliberate public package entrypoint.
 export {
   AppServerClient,
   AppServerError,
