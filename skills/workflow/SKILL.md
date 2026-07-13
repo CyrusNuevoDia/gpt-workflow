@@ -1,6 +1,6 @@
 ---
 name: workflow
-description: Author, run, resume, inspect, and debug deterministic multi-agent JavaScript workflows powered by the gpt-workflow package and Codex App Server. Use when Codex should create or change a workflow under `.codex/workflows`, choose between `agent`, `parallel`, `pipeline`, and child workflows, execute `gpt-workflow run`, resume a prior run ID, stream a workflow journal, or diagnose workflow replay and runtime failures.
+description: Author, run, resume, inspect, and debug deterministic multi-agent JavaScript workflows powered by the gpt-workflow package and Codex App Server. Use when Codex should create or change a workflow under `.codex/workflows`, choose between `agent`, `parallel`, `pipeline`, and child workflows, execute `gpt-workflow`, resume a prior run ID, stream a workflow journal, or diagnose workflow replay and runtime failures.
 ---
 
 # Workflow
@@ -12,9 +12,9 @@ judgment.
 
 1. Read applicable `AGENTS.md` files and inspect existing `.codex/workflows/`,
    project dependencies, and local conventions.
-2. Before running a workflow, verify that the `gpt-workflow` executable is
-   available globally or through the project. If it is missing and dependency
-   setup is in scope, install it with `bun add --global gpt-workflow`.
+2. Before running a workflow, verify that `bunx` is available. Run the CLI as
+   `bunx gpt-workflow@latest`; do not require or install a global copy of the
+   package.
 3. Confirm that deterministic multi-agent orchestration is useful. Prefer one
    ordinary Codex task when a single context can solve the work without explicit
    fan-out, staging, voting, or replay.
@@ -48,14 +48,14 @@ judgment.
 Run from the repository root:
 
 ```sh
-gpt-workflow run .codex/workflows/<name>.js | tee run.jsonl
+bunx gpt-workflow@latest run .codex/workflows/<name>.js | tee run.jsonl
 ```
 
 Read the terminal NDJSON record and its `journalPath`. Inspect journal entries
 before rerunning. For a prior run ID:
 
 ```sh
-gpt-workflow run --resume <runId> .codex/workflows/<name>.js
+bunx gpt-workflow@latest run --resume <runId> .codex/workflows/<name>.js
 ```
 
 Stream journals line by line with `parseWorkflowJournalEntry`; never require a

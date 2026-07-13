@@ -18,6 +18,10 @@ Restart the ChatGPT desktop app after installation and use a new task so Codex
 loads the bundled skill. Use `codex plugin marketplace list` and
 `codex plugin list` to inspect configured sources and installed plugins.
 
+The plugin requires Bun, but it does not require a separate package install.
+The bundled skill runs the latest published CLI with
+`bunx gpt-workflow@latest`.
+
 ## Bundled skill
 
 The `workflow` skill helps Codex:

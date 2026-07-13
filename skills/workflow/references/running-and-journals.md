@@ -3,8 +3,8 @@
 ## CLI
 
 ```sh
-gpt-workflow run .codex/workflows/<name>.js
-gpt-workflow run --resume <runId> .codex/workflows/<name>.js
+bunx gpt-workflow@latest run .codex/workflows/<name>.js
+bunx gpt-workflow@latest run --resume <runId> .codex/workflows/<name>.js
 ```
 
 Stdout is ordered NDJSON and stderr is human diagnostics. Every event includes
