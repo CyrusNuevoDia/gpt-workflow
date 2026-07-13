@@ -1,6 +1,6 @@
 {
   "name": "gpt-workflow",
-  "version": "0.1.2",
+  "version": "0.1.2+codex.20260713005709",
   "description": "Author, run, resume, and debug deterministic multi-agent workflows powered by Codex App Server.",
   "author": {
     "name": "Cyrus Nouroozi",
@@ -8,7 +8,12 @@
   },
   "homepage": "https://github.com/CyrusNuevoDia/gpt-workflow",
   "repository": "https://github.com/CyrusNuevoDia/gpt-workflow",
-  "keywords": ["codex", "multi-agent", "orchestration", "workflows"],
+  "keywords": [
+    "codex",
+    "multi-agent",
+    "orchestration",
+    "workflows"
+  ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Workflow",
@@ -16,7 +21,10 @@
     "longDescription": "Author workflow scripts, run and resume them through Codex App Server, and inspect durable journals without loading them wholesale.",
     "developerName": "Cyrus Nouroozi",
     "category": "Developer Tools",
-    "capabilities": ["Read", "Write"],
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
     "websiteURL": "https://github.com/CyrusNuevoDia/gpt-workflow",
     "defaultPrompt": "Use workflow to author and verify a deterministic multi-agent workflow."
   }
