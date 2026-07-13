@@ -17,8 +17,10 @@ test("publishes only the deliberate runtime and App Server values", () => {
     "JSONBoundaryError",
     "REQUIRED_APP_SERVER_MODELS",
     "WorkflowLoadError",
+    "listRunSummaries",
     "parseWorkflowJournalEntry",
     "parseWorkflowScript",
+    "readRunStatus",
     "resolveAgentType",
     "runWorkflowScript"
   ])

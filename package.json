@@ -35,6 +35,8 @@
     "dist/src/cli.js",
     "dist/src/index.d.ts",
     "dist/src/index.js",
+    "dist/src/run-inspection.d.ts",
+    "dist/src/run-inspection.js",
     "dist/src/runtime.d.ts",
     "dist/src/runtime.js",
     "dist/src/workflow-journal.d.ts",

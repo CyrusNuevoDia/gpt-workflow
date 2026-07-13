@@ -1,28 +1,50 @@
 #!/usr/bin/env bun
 
 import { randomUUID } from "node:crypto"
+import { appendFile, mkdir } from "node:fs/promises"
 import { join, resolve } from "node:path"
 import { parseArgs } from "node:util"
 import { AppServerClient, REQUIRED_APP_SERVER_MODELS } from "./app-server.js"
+import { listRunSummaries, readRunStatus } from "./run-inspection.js"
 import {
+  type JSONValue,
+  type LoadedWorkflowScript,
+  parseWorkflowScript,
   runWorkflowScript,
   type WorkflowExecution,
   type WorkflowExecutionOptions
 } from "./runtime.js"
 
-const USAGE = `Usage: gpt-workflow run [--default-model <name>] [--resume <runId>] <script.js>
+const USAGE = `Usage:
+  gpt-workflow run [--default-model <name>] [--resume <runId>] [--args <json>] <script.js>
+  gpt-workflow list
+  gpt-workflow status <runId>
 
 Run a workflow through Codex App Server. During a run, stdout is NDJSON and
-human-readable diagnostics are written to stderr.
+human-readable diagnostics are written to stderr. List writes one JSON object
+per run; status writes one JSON object.
 `
 const RUN_ID_PATTERN = /^[A-Za-z0-9._-]+$/
+const PERSISTED_AGENT_EVENT_TYPES = new Set([
+  "collaboration",
+  "error",
+  "lifecycle",
+  "terminal",
+  "usage",
+  "warning"
+])
 
 type CLIClient = Pick<AppServerClient, "close" | "startAgent">
 
 type CLIDependencies = {
+  appendFile: (path: string, contents: string) => Promise<void>
   connect: (options: { defaultModel?: string }) => Promise<CLIClient>
   cwd: () => string
+  listRuns: typeof listRunSummaries
   makeRunId: () => string
+  mkdir: (path: string) => Promise<void>
+  parseWorkflow: (source: string, fileName: string) => LoadedWorkflowScript
+  readRun: typeof readRunStatus
   readSource: (path: string) => Promise<string>
   runWorkflow: (
     source: string,
@@ -33,13 +55,22 @@ type CLIDependencies = {
 }
 
 const defaultDependencies: CLIDependencies = {
+  appendFile: async (path, contents) => {
+    await appendFile(path, contents)
+  },
   connect: ({ defaultModel }) =>
     AppServerClient.connect({
       requiredModels: REQUIRED_APP_SERVER_MODELS,
       ...(defaultModel === undefined ? {} : { defaultModel })
     }),
   cwd: () => process.cwd(),
+  listRuns: listRunSummaries,
   makeRunId: () => `workflow-${randomUUID()}`,
+  mkdir: async (path) => {
+    await mkdir(path, { recursive: true })
+  },
+  parseWorkflow: parseWorkflowScript,
+  readRun: readRunStatus,
   readSource: (path) => Bun.file(path).text(),
   runWorkflow: runWorkflowScript,
   writeError: (text) => {
@@ -50,16 +81,18 @@ const defaultDependencies: CLIDependencies = {
   }
 }
 
-export async function runCLI(
+export function runCLI(
   args: string[],
-  dependencies: CLIDependencies = defaultDependencies
+  overrides: Partial<CLIDependencies> = {}
 ): Promise<number> {
+  const dependencies = { ...defaultDependencies, ...overrides }
   let parsed: ReturnType<typeof parseArgs>
   try {
     parsed = parseArgs({
       allowPositionals: true,
       args,
       options: {
+        args: { type: "string" },
         "default-model": { type: "string" },
         help: { short: "h", type: "boolean" },
         resume: { type: "string" }
@@ -68,34 +101,119 @@ export async function runCLI(
     })
   } catch (error) {
     dependencies.writeError(`gpt-workflow: ${describe(error)}\n${USAGE}`)
-    return 1
+    return Promise.resolve(1)
   }
 
   if (parsed.values.help) {
     dependencies.writeOutput(USAGE)
-    return 0
+    return Promise.resolve(0)
   }
 
-  const [command, scriptArgument, ...extra] = parsed.positionals
-  if (command !== "run" || !scriptArgument || extra.length > 0) {
-    dependencies.writeError(
-      `gpt-workflow: expected exactly: gpt-workflow run [--default-model <name>] [--resume <runId>] <script.js>\n${USAGE}`
+  const [command, ...positionals] = parsed.positionals
+  if (command === "list") {
+    if (positionals.length > 0 || hasRunOptions(parsed.values)) {
+      return Promise.resolve(
+        usageError(dependencies, "expected exactly: gpt-workflow list")
+      )
+    }
+    return runList(dependencies)
+  }
+  if (command === "status") {
+    const [runId, ...extra] = positionals
+    if (
+      !runId ||
+      extra.length > 0 ||
+      hasRunOptions(parsed.values) ||
+      !RUN_ID_PATTERN.test(runId)
+    ) {
+      return Promise.resolve(
+        usageError(
+          dependencies,
+          "expected exactly: gpt-workflow status <runId>"
+        )
+      )
+    }
+    return runStatus(runId, dependencies)
+  }
+  if (command !== "run") {
+    return Promise.resolve(
+      usageError(dependencies, "expected run, list, or status")
     )
+  }
+  const [scriptArgument, ...extra] = positionals
+  if (!scriptArgument || extra.length > 0) {
+    return Promise.resolve(
+      usageError(
+        dependencies,
+        "expected exactly: gpt-workflow run [--default-model <name>] [--resume <runId>] [--args <json>] <script.js>"
+      )
+    )
+  }
+  return runWorkflowCommand(scriptArgument, parsed.values, dependencies)
+}
+
+async function runList(dependencies: CLIDependencies): Promise<number> {
+  try {
+    const summaries = await dependencies.listRuns(dependencies.cwd())
+    for (const summary of summaries) {
+      dependencies.writeOutput(`${JSON.stringify(summary)}\n`)
+    }
+    return 0
+  } catch (error) {
+    dependencies.writeError(`gpt-workflow: ${describe(error)}\n`)
     return 1
   }
+}
 
-  const resumeValue = parsed.values.resume
+async function runStatus(
+  runId: string,
+  dependencies: CLIDependencies
+): Promise<number> {
+  try {
+    const status = await dependencies.readRun(dependencies.cwd(), runId)
+    if (status === null) {
+      dependencies.writeError(`gpt-workflow: run not found: ${runId}\n`)
+      return 1
+    }
+    dependencies.writeOutput(`${JSON.stringify(status)}\n`)
+    return 0
+  } catch (error) {
+    dependencies.writeError(`gpt-workflow: ${describe(error)}\n`)
+    return 1
+  }
+}
+
+async function runWorkflowCommand(
+  scriptArgument: string,
+  values: ReturnType<typeof parseArgs>["values"],
+  dependencies: CLIDependencies
+): Promise<number> {
+  const resumeValue = values.resume
   if (
     resumeValue !== undefined &&
     (typeof resumeValue !== "string" || !RUN_ID_PATTERN.test(resumeValue))
   ) {
-    dependencies.writeError(
-      `gpt-workflow: --resume must contain only letters, numbers, periods, underscores, and hyphens\n${USAGE}`
+    return usageError(
+      dependencies,
+      "--resume must contain only letters, numbers, periods, underscores, and hyphens"
     )
-    return 1
   }
+
+  let workflowArgs: JSONValue | undefined
+  const argsValue = typeof values.args === "string" ? values.args : undefined
+  if (argsValue !== undefined) {
+    try {
+      workflowArgs = JSON.parse(argsValue) as JSONValue
+    } catch (error) {
+      return usageError(
+        dependencies,
+        `--args must be valid JSON: ${describe(error)}`
+      )
+    }
+  }
+
   const resumeFromRunId = resumeValue
-  const defaultModelValue = parsed.values["default-model"]
+  const defaultModelValue = values["default-model"]
   const defaultModel =
     typeof defaultModelValue === "string" ? defaultModelValue : undefined
   const runId = resumeFromRunId ?? dependencies.makeRunId()
@@ -108,25 +226,67 @@ export async function runCLI(
     "runs",
     runId
   )
+  const eventsPath = join(runDirectory, "events.jsonl")
+  let writeTail = Promise.resolve()
   let sequence = 0
   const emit = (record: Record<string, unknown>): void => {
-    const recordSequence = sequence
+    const lineRecord = {
+      ...record,
+      runDirectory,
+      runId,
+      schemaVersion: 1,
+      scriptPath,
+      sequence,
+      ts: Date.now()
+    }
     sequence += 1
-    dependencies.writeOutput(
-      `${JSON.stringify({
-        ...record,
-        runDirectory,
-        runId,
-        schemaVersion: 1,
-        scriptPath,
-        sequence: recordSequence
-      })}\n`
+    const line = `${JSON.stringify(lineRecord)}\n`
+    dependencies.writeOutput(line)
+    if (shouldPersistRecord(lineRecord)) {
+      writeTail = writeTail.then(() =>
+        dependencies.appendFile(eventsPath, line)
+      )
+    }
+  }
+  const finish = async (exitCode: number): Promise<number> => {
+    try {
+      await writeTail
+      return exitCode
+    } catch (error) {
+      dependencies.writeError(
+        `gpt-workflow: could not persist run events: ${describe(error)}\n`
+      )
+      return 1
+    }
+  }
+
+  try {
+    await dependencies.mkdir(runDirectory)
+  } catch (error) {
+    dependencies.writeError(
+      `gpt-workflow: could not create run directory: ${describe(error)}\n`
     )
+    return 1
+  }
+
+  let source: string
+  let loaded: LoadedWorkflowScript
+  try {
+    source = await dependencies.readSource(scriptPath)
+    loaded = dependencies.parseWorkflow(source, scriptPath)
+  } catch (error) {
+    const failure = failureRecord(error)
+    emit({ error: failure, type: "run.failed" })
+    dependencies.writeError(`gpt-workflow: ${failure.message}\n`)
+    return finish(1)
   }
 
   emit({
+    meta: {
+      description: loaded.meta.description,
+      name: loaded.meta.name
+    },
     ...(resumeFromRunId === undefined ? {} : { resumeFromRunId }),
-    scriptPath,
     type: "run.started"
   })
 
@@ -148,7 +308,6 @@ export async function runCLI(
     clientPromise = undefined
   }
   try {
-    const source = await dependencies.readSource(scriptPath)
     const execution = await dependencies.runWorkflow(source, {
       appServer,
       cwd: invocationDirectory,
@@ -156,6 +315,7 @@ export async function runCLI(
       onAgentEvent: (event) => emit({ event, type: "agent.event" }),
       onWorkflowEvent: (event) => emit({ event, type: "workflow.event" }),
       runDirectory,
+      ...(argsValue === undefined ? {} : { args: workflowArgs }),
       ...(resumeFromRunId === undefined
         ? { workflowRunId: runId }
         : { resumeFromRunId })
@@ -173,17 +333,58 @@ export async function runCLI(
       type: "run.completed",
       usage: execution.usage
     })
-    return 0
+    return finish(0)
   } catch (error) {
     await closeClient().catch(() => undefined)
-    const failure = {
-      message: describe(error),
-      name: error instanceof Error ? error.name : "Error"
-    }
+    const failure = failureRecord(error)
     emit({ error: failure, type: "run.failed" })
     dependencies.writeError(`gpt-workflow: ${failure.message}\n`)
-    return 1
+    return finish(1)
   }
+}
+
+function hasRunOptions(
+  values: ReturnType<typeof parseArgs>["values"]
+): boolean {
+  return (
+    values.args !== undefined ||
+    values["default-model"] !== undefined ||
+    values.resume !== undefined
+  )
+}
+
+function shouldPersistRecord(record: Record<string, unknown>): boolean {
+  if (
+    record.type === "run.started" ||
+    record.type === "run.completed" ||
+    record.type === "run.failed" ||
+    record.type === "workflow.event"
+  ) {
+    return true
+  }
+  if (record.type !== "agent.event" || !isRecord(record.event)) {
+    return false
+  }
+  return (
+    typeof record.event.type === "string" &&
+    PERSISTED_AGENT_EVENT_TYPES.has(record.event.type)
+  )
+}
+
+function failureRecord(error: unknown): { message: string; name: string } {
+  return {
+    message: describe(error),
+    name: error instanceof Error ? error.name : "Error"
+  }
+}
+
+function usageError(dependencies: CLIDependencies, message: string): number {
+  dependencies.writeError(`gpt-workflow: ${message}\n${USAGE}`)
+  return 1
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
 }
 
 function describe(error: unknown): string {

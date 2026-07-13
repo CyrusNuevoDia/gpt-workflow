@@ -23,7 +23,7 @@ const buildInfoPath = join(repository, "tsconfig.tsbuildinfo")
 const artifactsPath = join(repository, ".verification-artifacts")
 
 const publicValueExports =
-  "AppServerClient AppServerError AppServerModelError AppServerProcessError AppServerProtocolError AppServerRemoteError AppServerResultError AppServerTimeoutError AppServerTurnError BUILTIN_AGENT_DEFINITIONS JSONBoundaryError REQUIRED_APP_SERVER_MODELS WorkflowLoadError parseWorkflowJournalEntry parseWorkflowScript resolveAgentType runWorkflowScript".split(
+  "AppServerClient AppServerError AppServerModelError AppServerProcessError AppServerProtocolError AppServerRemoteError AppServerResultError AppServerTimeoutError AppServerTurnError BUILTIN_AGENT_DEFINITIONS JSONBoundaryError REQUIRED_APP_SERVER_MODELS WorkflowLoadError listRunSummaries parseWorkflowJournalEntry parseWorkflowScript readRunStatus resolveAgentType runWorkflowScript".split(
     " "
   )
 
