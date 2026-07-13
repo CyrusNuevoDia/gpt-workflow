@@ -31,6 +31,8 @@ export const transformWorkflow = (source: string) =>
     .replaceAll("sonnet", "gpt-5.6-terra")
     .replaceAll("opus", "gpt-5.6-sol")
     .replaceAll("fable", "gpt-5.6-sol")
+    .replaceAll("general-purpose", "default")
+    .replaceAll("Explore", "explorer")
 
 async function discoverWorkflowNames(directory: string): Promise<string[]> {
   try {

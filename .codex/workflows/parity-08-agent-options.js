@@ -11,7 +11,7 @@ export const meta = {
   name: "parity-08-agent-options",
   phases: [
     { detail: "model/effort/label/phase", model: "gpt-5.6-luna", title: "Overrides" },
-    { detail: "general-purpose and Explore subagents", title: "AgentTypes" }
+    { detail: "default and explorer subagents", title: "AgentTypes" }
   ]
 };
 
@@ -50,8 +50,8 @@ const r = await parallel([
     agent(
       "Use the Bash tool to run pwd. Return ok=true and the cwd you observed.",
       {
-        agentType: "general-purpose",
-        label: "type:general-purpose",
+        agentType: "default",
+        label: "type:default",
         model: "gpt-5.6-luna",
         phase: "AgentTypes",
         schema: CWD_SCHEMA
@@ -61,7 +61,7 @@ const r = await parallel([
     agent(
       "Does a file named parity-01-core.js exist anywhere in this repository? Reply with exactly one word: yes or no.",
       {
-        agentType: "Explore",
+        agentType: "explorer",
         label: "type:explore",
         model: "gpt-5.6-luna",
         phase: "AgentTypes"
@@ -80,7 +80,7 @@ check(
   JSON.stringify(r[1])
 );
 check(
-  "agentType resolves custom subagents (general-purpose)",
+  "agentType resolves custom subagents (default)",
   !!r[2] &&
     typeof r[2] === "object" &&
     r[2].ok === true &&
@@ -93,7 +93,7 @@ check(
   "typeof=" + typeof r[2]
 );
 check(
-  "agentType resolves read-only registry agents (Explore)",
+  "agentType resolves read-only registry agents (explorer)",
   typeof r[3] === "string" && r[3].toLowerCase().indexOf("yes") !== -1,
   JSON.stringify(r[3])
 );

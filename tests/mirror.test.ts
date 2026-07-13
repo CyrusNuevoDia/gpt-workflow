@@ -80,6 +80,18 @@ test("check rejects a missing mirror in a temporary directory", async () => {
   })
 })
 
+test("transform maps Claude agent-type names to Codex built-ins", () => {
+  expect(
+    transformWorkflow(
+      'await agent("x", { agentType: "general-purpose" })\n' +
+        'await agent("y", { agentType: "Explore" })'
+    )
+  ).toBe(
+    'await agent("x", { agentType: "default" })\n' +
+      'await agent("y", { agentType: "explorer" })'
+  )
+})
+
 test("check rejects stale Claude model text in a mirror", async () => {
   await withDirectories(async ({ sourceDirectory, targetDirectory }) => {
     const source = "const model = 'haiku'\n"
