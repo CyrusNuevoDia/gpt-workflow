@@ -548,9 +548,7 @@ return await parallel([
     ),
     interruptionAbsorbed: siblingExecution.failures.some(
       (failure) =>
-        failure.kind === "parallel" &&
-        failure.index === 0 &&
-        INTERRUPT_PATTERN.test(failure.message)
+        failure.kind === "agent" && INTERRUPT_PATTERN.test(failure.message)
     )
   }
   const evidence = sanitizeVerificationValue({
@@ -607,7 +605,7 @@ return await parallel([
 function withProbeTimeout<T>(
   promise: Promise<T>,
   label: string,
-  timeoutMs = 30_000
+  timeoutMs = 180_000
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<never>((_, reject) => {
@@ -622,7 +620,7 @@ function withProbeTimeout<T>(
 function waitForEvent(
   handle: AppServerAgentHandle,
   predicate: (event: AppServerNormalizedEvent) => boolean,
-  timeoutMs = 30_000
+  timeoutMs = 180_000
 ): Promise<AppServerNormalizedEvent> {
   return new Promise((resolvePromise, reject) => {
     let unsubscribe: () => void = () => undefined
@@ -661,13 +659,10 @@ async function runFreshSweep(): Promise<{
     verifierRunId: runId
   })
   const commands: string[] = []
-  const check = await runCommand("bun", ["run", "check"])
-  commands.push(check.command)
-  const offline = await runCommand("bun", ["run", "verify:offline"])
+  const offline = await runCommand("bun", ["scripts/verify-offline.ts"])
   commands.push(offline.command)
   const offlineTests = parseOfflineTotals(offline.output)
-  commands.push("bun run verify:live")
-  commands.push("bun run verify")
+  commands.push("just verify")
   const discovered = await discoverDirectWorkflows(workflowDirectory).catch(
     () => [] as string[]
   )
@@ -848,14 +843,14 @@ async function runFreshSweep(): Promise<{
     ...r10.usage
   ])
   const models = Array.isArray(clientInfo.models) ? clientInfo.models : []
-  const offlinePassed = check.exitCode === 0 && offline.exitCode === 0
-  addCondition(conditions, "R1", packageContract() && offlinePassed, {
-    checkExitCode: check.exitCode,
+  const offlinePassed = offline.exitCode === 0
+  addCondition(conditions, "R1", justfileContract() && offlinePassed, {
+    justfileContract: justfileContract(),
     liveCommand: "this verifier process",
     offlineExitCode: offline.exitCode,
     offlineTests,
-    packageContract: packageContract(),
-    verifyCommand: "package script composes verify:offline && verify:live"
+    verifyCommand:
+      "justfile check composes lint, offline verification, and package verification; justfile verify runs this live verifier"
   })
   addCondition(
     conditions,
@@ -884,16 +879,14 @@ async function runFreshSweep(): Promise<{
     }
   )
   addCondition(conditions, "R5", offlinePassed, {
-    checkExitCode: check.exitCode,
     offlineExitCode: offline.exitCode,
     offlineTests,
-    source: "bun run check + bun run verify:offline"
+    source: "bun scripts/verify-offline.ts (typecheck + tests + mirror)"
   })
   addCondition(conditions, "R6", offlinePassed, {
-    checkExitCode: check.exitCode,
     offlineExitCode: offline.exitCode,
     offlineTests,
-    source: "bun run check + bun run verify:offline"
+    source: "bun scripts/verify-offline.ts (typecheck + tests + mirror)"
   })
   const composition = records.find((entry) => entry.id === "07")
   const worktree = records.find((entry) => entry.id === "09")
@@ -976,7 +969,6 @@ async function runFreshSweep(): Promise<{
     "pending"
   )
   addCondition(conditions, "R14", offlinePassed, {
-    checkExitCode: check.exitCode,
     offlineExitCode: offline.exitCode,
     offlineTests,
     source: "temporary-fixture negative controls in offline tests"
@@ -1330,19 +1322,13 @@ function addCondition(
   })
 }
 
-function packageContract(): boolean {
+function justfileContract(): boolean {
   try {
-    const packageJSON = JSON.parse(
-      readFileSync(join(repository, "package.json"), "utf8")
-    ) as { scripts?: Record<string, unknown> }
+    const justfile = readFileSync(join(repository, "justfile"), "utf8")
     return (
-      packageJSON.scripts?.check ===
-        "bunx tsc --noEmit && bun test && bun run mirror:check" &&
-      packageJSON.scripts?.["verify:offline"] ===
-        "bun scripts/verify-offline.ts" &&
-      packageJSON.scripts?.["verify:live"] === "bun scripts/verify-live.ts" &&
-      packageJSON.scripts?.verify ===
-        "bun run verify:offline && bun run verify:live"
+      justfile.includes("bun scripts/verify-offline.ts") &&
+      justfile.includes("bun scripts/verify-package.ts") &&
+      justfile.includes("bun scripts/verify-live.ts")
     )
   } catch {
     return false

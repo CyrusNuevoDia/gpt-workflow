@@ -23,7 +23,7 @@ const buildInfoPath = join(repository, "tsconfig.tsbuildinfo")
 const artifactsPath = join(repository, ".verification-artifacts")
 
 const publicValueExports =
-  "AppServerClient AppServerError AppServerModelError AppServerProcessError AppServerProtocolError AppServerRemoteError AppServerResultError AppServerTimeoutError AppServerTurnError JSONBoundaryError REQUIRED_APP_SERVER_MODELS WorkflowLoadError parseWorkflowJournalEntry parseWorkflowScript runWorkflowScript".split(
+  "AppServerClient AppServerError AppServerModelError AppServerProcessError AppServerProtocolError AppServerRemoteError AppServerResultError AppServerTimeoutError AppServerTurnError BUILTIN_AGENT_DEFINITIONS JSONBoundaryError REQUIRED_APP_SERVER_MODELS WorkflowLoadError parseWorkflowJournalEntry parseWorkflowScript resolveAgentType runWorkflowScript".split(
     " "
   )
 
@@ -311,8 +311,8 @@ async function verify(): Promise<{ paths: string[]; tarball: string }> {
     )
     const smoke = await run(
       "installed package smoke",
-      "node",
-      ["--input-type=module", "--eval", smokeSource],
+      "bun",
+      ["--eval", smokeSource],
       consumer,
       env
     )

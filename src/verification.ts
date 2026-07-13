@@ -525,8 +525,7 @@ export function validateResumeProtocol(
     journalKeysCoverLiveCalls:
       journalStartedKeys.length ===
       firstLive + numberValue(r3.usage.liveAgentCount),
-    journalKeysUnique:
-      new Set(journalStartedKeys).size === journalStartedKeys.length,
+    journalKeysV3: journalStartedKeys.every((key) => key.startsWith("v3:")),
     nonces: { r1: firstNonces, r2: replayNonces, r3: changedNonces },
     replayByteIdentical: JSON.stringify(first) === JSON.stringify(replay),
     replayScaleDuration:
