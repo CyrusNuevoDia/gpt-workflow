@@ -1,6 +1,6 @@
 {
   "name": "gpt-workflow",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Author, run, resume, and debug deterministic multi-agent workflows powered by Codex App Server.",
   "author": {
     "name": "Cyrus Nouroozi",
