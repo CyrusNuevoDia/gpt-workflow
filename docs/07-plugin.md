@@ -30,6 +30,7 @@ The `workflow` skill helps Codex:
 - author scripts under `.codex/workflows/`;
 - run them through the CLI or library;
 - resume by run ID;
+- inspect past runs with `list` and `status`;
 - stream and diagnose journals without loading them wholesale;
 - apply runtime, failure, cap, and verification rules from its references.
 

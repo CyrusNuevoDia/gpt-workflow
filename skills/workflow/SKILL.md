@@ -54,22 +54,38 @@ Run from the repository root:
 
 ```sh
 bunx gpt-workflow@latest run --default-model <the model you are running as> \
-  .codex/workflows/<name>.js | tee run.jsonl
+  .codex/workflows/<name>.js
 ```
 
-Read the terminal NDJSON record and its `journalPath`. Inspect journal entries
-before rerunning. For a prior run ID:
+Pass workflow input as strict JSON with `--args '{"key":"value"}'`; quote bare
+strings (`--args '"triage"'`). Invalid JSON exits 1 before any record is
+emitted. Piping to `tee` is optional: every run persists a filtered event
+stream to `.codex/workflows/runs/<runId>/events.jsonl` automatically.
+
+Read the terminal NDJSON record and its `journalPath`. Inspect runs without
+spending model tokens:
+
+```sh
+bunx gpt-workflow@latest list
+bunx gpt-workflow@latest status <runId>
+```
+
+`list` prints one JSON line per run, newest first. `status` prints one JSON
+object with per-phase and per-agent progress and token totals. `"incomplete"`
+means no terminal record — in-flight and interrupted runs look identical;
+check `lastEventAt`. For a prior run ID:
 
 ```sh
 bunx gpt-workflow@latest run --default-model <the model you are running as> \
   --resume <runId> .codex/workflows/<name>.js
 ```
 
-Stream journals line by line with `parseWorkflowJournalEntry`; never require a
-whole-file read. Treat unmatched `started` records as interrupted or failed
-live calls. Journal v3 matches a prompt-and-authored-options key multiset until
-the first miss; after that miss, all later calls run live. Phase injection does
-not affect keys.
+Pass the same `--args` on resume; changed args change prompts and miss replay
+keys. For replay debugging, stream journals line by line with
+`parseWorkflowJournalEntry`; never require a whole-file read. Treat unmatched
+`started` records as interrupted or failed live calls. Journal v3 matches a
+prompt-and-authored-options key multiset until the first miss; after that
+miss, all later calls run live. Phase injection does not affect keys.
 
 ## Verify proportionally
 

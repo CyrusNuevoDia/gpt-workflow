@@ -29,7 +29,8 @@ The body receives these globals: `agent`, `parallel`, `pipeline`, `phase`,
 `clearTimeout`. `console.log`, `info`, `warn`, `error`, and `debug` all forward
 their joined arguments as `log` events. The VM has no Node.js imports,
 `process`, `require`, network globals, intervals, or microtask scheduling. Pass
-external data through the JSON-compatible `args` option.
+external data through the JSON-compatible `args` value — the CLI's
+`--args <json>` flag or the library's `args` option.
 
 `agent()` can select the built-in `default`, `worker`, or `explorer` definition
 with `agentType`. It can also select a custom definition by the `name` field in

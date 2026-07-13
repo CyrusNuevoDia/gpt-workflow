@@ -48,6 +48,21 @@ to two corrective turns on the same thread. Exhaustion becomes an agent
 failure, so the workflow-level result for that call is `null` and the failure
 is recorded.
 
+## CLI argument and inspection failures
+
+- `--args` accepts strict JSON only. Anything `JSON.parse` rejects is a usage
+  error: the CLI writes `--args must be valid JSON: ...` to stderr and exits
+  1 without emitting any NDJSON record, so there is no `run.started` and
+  nothing to resume. Pass a plain string as quoted JSON: `--args '"triage"'`.
+- `gpt-workflow status <runId>` with an unknown run ID writes
+  `run not found: <runId>` to stderr and exits 1. A malformed run ID is a
+  usage error with the same exit code.
+- A run recorded before events persistence — a journal without
+  `events.jsonl` — is not an error: `status` reports `"unknown"` with
+  `journalOnly: true` and journal record counts, and `list` marks the run the
+  same way.
+- `gpt-workflow list` with no runs directory prints nothing and exits 0.
+
 ## Journal parse failures
 
 `parseWorkflowJournalEntry` throws `SyntaxError` for blank text, malformed JSON,
@@ -60,14 +75,18 @@ your streaming reader.
 
 1. Read the terminal CLI record. `run.completed` contains result, failures,
    usage, and `journalPath`; `run.failed` contains the top-level error.
-2. Stream the journal and inspect completed `result` records before rerunning.
-3. Resume with the same run ID after an interruption. Completed matching calls
+2. Run `gpt-workflow status <runId>` for per-phase and per-agent state
+   rebuilt from `events.jsonl`; it spends no model tokens. `"incomplete"`
+   means no terminal record — check `lastEventAt` before assuming the run is
+   still active.
+3. Stream the journal and inspect completed `result` records before rerunning.
+4. Resume with the same run ID after an interruption. Completed matching calls
    replay; unmatched `started` records run again.
-4. If replay misses unexpectedly, compare prompt text and authored options.
-   Calls match from a key multiset until the first miss; everything later then
-   runs live.
-5. Use normalized `agent.event` records and their `threadId` / `turnId` to
+5. If replay misses unexpectedly, compare prompt text, `--args`, and authored
+   options. Calls match from a key multiset until the first miss; everything
+   later then runs live.
+6. Use normalized `agent.event` records and their `threadId` / `turnId` to
    correlate a workflow call with Codex App Server history.
-6. Run `just check` for offline, package, and installed-CLI verification. Run
+7. Run `just check` for offline, package, and installed-CLI verification. Run
    `just verify` only when live model-backed verification and its token cost are
    intended.

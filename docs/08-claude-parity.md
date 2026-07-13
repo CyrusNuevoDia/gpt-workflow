@@ -28,6 +28,9 @@ without implying that the two runtimes use the same substrate.
   selected model supports them.
 - Top-level and side-effect-only `undefined` results coerce to `null`.
 - `console` methods and `log()` produce workflow log events.
+- Invocation input reaches the script as the `args` global on both runtimes,
+  arriving verbatim and `undefined` when omitted; the Codex CLI accepts it
+  as strict JSON via `--args`.
 
 ## Known divergences
 
@@ -45,3 +48,8 @@ without implying that the two runtimes use the same substrate.
 - Worktree semantics are identical, but `gpt-workflow` uses
   `.codex/worktrees/<runId>-<n>` while Claude uses `.claude/worktrees`.
 - There is no 512 KiB workflow script size cap.
+- Claude surfaces run progress in its session-embedded `/workflows` view;
+  `gpt-workflow` instead persists a filtered event stream to the run's
+  `events.jsonl` and reads it back through `gpt-workflow list` and
+  `gpt-workflow status <runId>`. There is no pause, per-agent stop, or
+  agent-restart control surface.

@@ -48,6 +48,7 @@ boundary. It is not a security sandbox for hostile JavaScript.
 
 ```sh
 gpt-workflow run --default-model gpt-5.6-luna \
+  --args '{"files":["src/cli.ts","src/runtime.ts"]}' \
   .codex/workflows/summarize-files.js
 ```
 
@@ -59,9 +60,15 @@ Use `agentType: "default"`, `"worker"`, or `"explorer"` for a built-in agent
 definition. Project and personal `.codex/agents/*.toml` files can define custom
 types; see the [API reference](03-api.md#agent-type-registry).
 
+`--args` supplies the script's `args` global as strict JSON. A plain string
+must be quoted JSON (`--args '"triage"'`); anything `JSON.parse` rejects
+exits 1 with a usage error on stderr before any record is emitted. Omit the
+flag and `args` is `undefined`.
+
 Stdout is ordered NDJSON. Every record includes `schemaVersion`, `sequence`,
-`runId`, `scriptPath`, `runDirectory`, and `type`. Human diagnostics go to
-stderr.
+`runId`, `scriptPath`, `runDirectory`, `ts` (epoch milliseconds), and `type`.
+The opening `run.started` record carries the script's `meta`. Human
+diagnostics go to stderr.
 
 The terminal `run.completed` record contains `result`, `usage`, `failures`, and
 `journalPath`. The journal lives at:
@@ -70,13 +77,44 @@ The terminal `run.completed` record contains `result`, `usage`, `failures`, and
 .codex/workflows/runs/<runId>/journal.jsonl
 ```
 
-Capture the stream without corrupting it:
+The same directory collects `events.jsonl`, a filtered copy of the stream
+that the two commands below read back — no need to `tee` the run yourself.
+
+## List past runs
+
+`list` scans `.codex/workflows/runs/` and prints one JSON line per run,
+newest first. It reads only local files and spends no model tokens:
 
 ```sh
-gpt-workflow run --default-model gpt-5.6-luna \
-  .codex/workflows/summarize-files.js | tee run.jsonl
-jq -r 'select(.type == "run.completed") | .journalPath' run.jsonl
+gpt-workflow list
 ```
+
+```json
+{"lastEventAt":1783971339402,"name":"summarize-files","runId":"workflow-123","scriptPath":"/repo/.codex/workflows/summarize-files.js","startedAt":1783971328984,"status":"completed","finishedAt":1783971339402,"failureCount":0,"usage":{"agentCount":2,"liveAgentCount":2,"modelUsage":{"gpt-5.6-luna":{"liveAgentCount":2,"replayedAgentCount":0,"subagentTokens":3412}},"peakConcurrentAgents":2,"replayedAgentCount":0,"subagentTokens":3412}}
+```
+
+`status` is `"completed"`, `"failed"`, `"incomplete"`, or `"unknown"`;
+`finishedAt`, `failureCount`, and `usage` appear once the run ended.
+
+## Check one run
+
+```sh
+gpt-workflow status workflow-123
+```
+
+Prints one JSON object: the `list` fields plus ordered `phases` (each with
+per-phase agent counts and token totals), `agents` (each with `agentId`,
+`label`, `phase`, `model`, `status`, and its latest cumulative `tokens`
+snapshot), and `result` and `failures` once the run ended. Like `list`, it
+spends no model tokens.
+
+A run with no terminal record is `"incomplete"` — an in-flight and an
+interrupted run look identical on disk, so the CLI never claims "running";
+check `lastEventAt` for staleness. Per-agent `status` comes from each agent's
+own terminal event, so an interrupted run still shows which agents completed
+or failed. An unknown run ID exits 1 with `run not found` on stderr. Runs
+recorded before `events.jsonl` existed report
+`{"status":"unknown","journalOnly":true,...}` with journal record counts.
 
 ## Resume a run
 
@@ -84,12 +122,15 @@ Reuse the `runId` from the original stream:
 
 ```sh
 gpt-workflow run --default-model gpt-5.6-luna --resume workflow-123 \
+  --args '{"files":["src/cli.ts","src/runtime.ts"]}' \
   .codex/workflows/summarize-files.js
 ```
 
 Resume reads the same journal and matches completed `agent()` calls from a key
 multiset. Matching is order-independent until the first miss; that call and all
-later calls run live and append new records to the same journal.
+later calls run live and append new records to the same journal. Keep `--args`
+identical to replay: changed args change prompts, which miss their journal
+keys and run live.
 
 ## Parse large journals
 

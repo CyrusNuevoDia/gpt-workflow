@@ -56,7 +56,7 @@ export const meta = {
   description: "Summarize files concurrently and merge the findings"
 }
 
-const files = ["src/cli.ts", "src/runtime.ts"]
+const files = args.files
 const summaries = await parallel(
   files.map((file) => () =>
     agent(`Read ${file} and return three factual bullets.`, {
@@ -67,6 +67,8 @@ const summaries = await parallel(
 
 return { summaries: summaries.filter(Boolean) }
 ```
+
+`args` is the run's input; the `--args` flag in the next section supplies it.
 
 If an agent's thread ends in an error, times out, returns no final message,
 or exhausts its structured-output retries, that call resolves to `null` and is
@@ -84,37 +86,65 @@ journal — their tokens are not spent again — then runs the rest live:
 
 ```sh
 gpt-workflow run --default-model gpt-5.6-luna \
-  .codex/workflows/summarize-files.js | tee run.jsonl
+  --args '{"files":["src/cli.ts","src/runtime.ts"]}' \
+  .codex/workflows/summarize-files.js
 gpt-workflow run --default-model gpt-5.6-luna --resume workflow-123 \
+  --args '{"files":["src/cli.ts","src/runtime.ts"]}' \
   .codex/workflows/summarize-files.js
 ```
 
 `--default-model` supplies the model for `agent()` calls that omit
-`options.model`; without either, the run rejects with a model error. For `--resume`, substitute
-the `runId` reported by your original run's records — real IDs look like
-`workflow-<uuid>`; these examples shorten it to `workflow-123`.
+`options.model`; without either, the run rejects with a model error.
+`--args` takes strict JSON and becomes the script's `args` global; pass a
+plain string as quoted JSON, e.g. `--args '"triage"'`. Invalid JSON exits 1
+with a usage error on stderr before any record is emitted. For `--resume`,
+substitute the `runId` reported by your original run's records — real IDs
+look like `workflow-<uuid>`; these examples shorten it to `workflow-123`.
+Resume with the same `--args`: changed args change prompts, which miss the
+journal and run live.
 
 Stdout is ordered NDJSON; human diagnostics go to stderr. Every record
 includes `schemaVersion`, `sequence`, `runId`, `scriptPath`, `runDirectory`,
-and `type`. The final `run.completed` record carries the workflow's `meta`,
+`ts` (epoch milliseconds), and `type`. The opening `run.started` record
+carries the script's `meta`; the final `run.completed` record carries `meta`,
 `result`, `usage`, `failures`, and `journalPath`:
 
 ```json
-{"scriptPath":"/repo/.codex/workflows/summarize-files.js","type":"run.started","runDirectory":"/repo/.codex/workflows/runs/workflow-123","runId":"workflow-123","schemaVersion":1,"sequence":0}
-{"failures":[],"journalPath":"/repo/.codex/workflows/runs/workflow-123/journal.jsonl","meta":{"name":"summarize-files","description":"Summarize files concurrently and merge the findings"},"result":{"summaries":["…","…"]},"type":"run.completed","usage":{"agentCount":2,"liveAgentCount":2,"modelUsage":{"gpt-5.6-luna":{"liveAgentCount":2,"replayedAgentCount":0,"subagentTokens":3412}},"peakConcurrentAgents":2,"replayedAgentCount":0,"subagentTokens":3412},"runDirectory":"/repo/.codex/workflows/runs/workflow-123","runId":"workflow-123","schemaVersion":1,"scriptPath":"/repo/.codex/workflows/summarize-files.js","sequence":9}
+{"meta":{"name":"summarize-files","description":"Summarize files concurrently and merge the findings"},"type":"run.started","runDirectory":"/repo/.codex/workflows/runs/workflow-123","runId":"workflow-123","schemaVersion":1,"scriptPath":"/repo/.codex/workflows/summarize-files.js","sequence":0,"ts":1783971328984}
+{"failures":[],"journalPath":"/repo/.codex/workflows/runs/workflow-123/journal.jsonl","meta":{"name":"summarize-files","description":"Summarize files concurrently and merge the findings"},"result":{"summaries":["…","…"]},"type":"run.completed","usage":{"agentCount":2,"liveAgentCount":2,"modelUsage":{"gpt-5.6-luna":{"liveAgentCount":2,"replayedAgentCount":0,"subagentTokens":3412}},"peakConcurrentAgents":2,"replayedAgentCount":0,"subagentTokens":3412},"runDirectory":"/repo/.codex/workflows/runs/workflow-123","runId":"workflow-123","schemaVersion":1,"scriptPath":"/repo/.codex/workflows/summarize-files.js","sequence":9,"ts":1783971339402}
 ```
 
 If the run fails, the CLI emits a `run.failed` record with the error and
 exits non-zero. Agent-side `null` failures don't fail the run: they stay
 visible in the `run.completed` record's `failures` and are retried on resume.
 
-The first command above captured the stream to `run.jsonl`; filter it without
-spending more tokens:
+## Inspect past runs
+
+There is no need to `tee` the stream for later inspection: every run also
+persists a filtered copy of its NDJSON to
+`.codex/workflows/runs/<runId>/events.jsonl` — the run, phase, and agent
+status records needed to rebuild run state, without the high-volume
+streaming deltas. Two commands read it back without spending model tokens:
 
 ```sh
-jq -c 'select(.type == "agent.event")' run.jsonl
-jq -r 'select(.type == "run.completed") | .journalPath' run.jsonl
+gpt-workflow list
+gpt-workflow status workflow-123
 ```
+
+`list` prints one JSON line per run, newest first, with `runId`, `name`,
+`scriptPath`, `status`, timestamps, and — once the run ended — `finishedAt`,
+`failureCount`, and `usage`. `status` prints one JSON object that adds
+ordered `phases`, per-agent progress and token totals, and the final
+`result` and `failures`. Output is plain JSON, so `jq` applies:
+
+```sh
+gpt-workflow status workflow-123 | jq '.phases'
+```
+
+A run with no terminal record reports `"incomplete"`: an in-flight and an
+interrupted run look identical on disk, so the CLI never claims "running" —
+check `lastEventAt` for staleness. An unknown run ID makes `status` exit 1
+with an error on stderr.
 
 ## Durable journals
 
@@ -123,6 +153,9 @@ Live runs persist an append-only replay journal at:
 ```text
 .codex/workflows/runs/<runId>/journal.jsonl
 ```
+
+The same directory holds `events.jsonl`, the inspection copy described
+above; the journal remains the only replay substrate.
 
 Resume reuses that `runId` and directory. Completed `agent()` calls are
 matched by their prompt and options, regardless of the order they finished
@@ -181,7 +214,9 @@ missing any of them. `runWorkflowScript` accepts `runDirectory` for
 caller-owned storage and `resumeFromRunId` for library resume, and splits
 failures exactly as [Write a workflow](#write-a-workflow) describes:
 agent-side failures resolve to `null` and land in `execution.failures`;
-everything else rejects.
+everything else rejects. `listRunSummaries` and `readRunStatus` expose the
+`list` and `status` data programmatically; see the
+[API reference](docs/03-api.md).
 
 ## Documentation
 

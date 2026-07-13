@@ -5,7 +5,7 @@
 Live CLI and library runs default to:
 
 ```text
-<process cwd>/.codex/workflows/runs/<runId>/journal.jsonl
+<process cwd>/.codex/workflows/runs/<runId>/
 ```
 
 The CLI calls this directory `runDirectory` in every NDJSON record. The library
@@ -13,8 +13,24 @@ returns the exact `journalPath`. `runDirectory` can override the library path;
 the CLI intentionally uses the invocation directory so a repository owns its
 run history.
 
-Add `.codex/workflows/runs/` to version-control ignores. Journals contain model
-outputs and may contain repository-sensitive information.
+The directory holds two files with different jobs:
+
+- `journal.jsonl` — the append-only replay journal. Resume reads it to skip
+  completed calls; it is the only replay substrate.
+- `events.jsonl` — a CLI-written, filtered copy of the run's stdout NDJSON
+  for later inspection. It keeps `run.started`, `run.completed`,
+  `run.failed`, every `workflow.event` (phase and log) record, and
+  `agent.event` records of types `lifecycle`, `terminal`, `usage`, `error`,
+  `warning`, and `collaboration`. High-volume streaming deltas — message,
+  reasoning, command-output, and plan events — are dropped. Each persisted
+  record carries the stream's `ts` (epoch milliseconds), which
+  `gpt-workflow list` and `gpt-workflow status` use to rebuild run state
+  without spending model tokens. Library runs through `runWorkflowScript` do
+  not write this file; library callers observe the same events through
+  `onAgentEvent` and `onWorkflowEvent`.
+
+Add `.codex/workflows/runs/` to version-control ignores. Both files contain
+model outputs and may contain repository-sensitive information.
 
 ## Journal wire format
 

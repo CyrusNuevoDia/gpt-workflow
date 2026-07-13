@@ -9,6 +9,17 @@
   executing the body.
 - `parseWorkflowJournalEntry(line)` parses one strict `started` or `result`
   record and throws `SyntaxError` for invalid input.
+- `listRunSummaries(cwd)` scans `<cwd>/.codex/workflows/runs/` and returns
+  newest-first `RunSummary` values from each run's `events.jsonl` boundary
+  records: `runId`, `name`, `scriptPath`, `status`, `startedAt`,
+  `lastEventAt`, plus `finishedAt`, `failureCount`, and `usage` after the run
+  ended. A missing runs directory returns an empty array.
+- `readRunStatus(cwd, runId)` reads one run's `events.jsonl` in full and
+  returns `RunStatus` — the summary plus ordered `phases`, per-agent `status`
+  and latest cumulative `tokens`, and terminal `result` / `failures` — or
+  `JournalRunStatus` for journal-only runs, or `null` for unknown run IDs. No
+  terminal record means `status: "incomplete"`, never "running". Neither
+  function spends model tokens.
 
 ## Execution options
 
@@ -44,8 +55,11 @@ workflow processes across the surrounding turn.
 
 For CLI runs, pass the invoking agent's current model with
 `--default-model <the model you are running as>`. Per-call `model` options are
-then optional and remain overrides.
+then optional and remain overrides. Pass workflow input with `--args <json>`
+(strict JSON; quote plain strings).
 
 The root package also exports App Server client/error values, JSON and runtime
-types, usage/cap types, and `WorkflowJournalEntry` with its started/result member
-types.
+types, usage/cap types, `WorkflowJournalEntry` with its started/result member
+types, and the run-inspection types `RunSummary`, `RunSummaryStatus`,
+`RunStatus`, `RunAgent`, `RunAgentStatus`, `RunPhase`, `RunTokenTotals`,
+`JournalRunStatus`, and `RunInspectionStatus`.

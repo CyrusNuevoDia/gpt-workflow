@@ -28,3 +28,9 @@ Follow this checklist from top to bottom:
    failed calls occupy their slot as `null`.
 7. Expect a script with no return value to produce `null`.
 8. Keep `console.log` calls when useful; they become workflow `log` events.
+9. Pass invocation input with `--args '<json>'` on the CLI; the script's
+   `args` global arrives verbatim and is `undefined` when the flag is
+   omitted.
+10. Inspect runs with `gpt-workflow list` and `gpt-workflow status <runId>`
+    instead of Claude's `/workflows` view; both read the run's `events.jsonl`
+    and spend no model tokens.

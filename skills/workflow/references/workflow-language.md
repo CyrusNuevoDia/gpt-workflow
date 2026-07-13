@@ -40,7 +40,7 @@ types resolve by `name` from project or personal `.codex/agents/*.toml` files.
   items; failed items become `null`.
 - `phase(title)` and `log(message)`: attributed workflow events.
 - `workflow(nameOrPath, childArgs?)`: one-level child composition by default.
-- `args`: caller-provided JSON value.
+- `args`: caller-provided JSON value (`--args <json>` on the CLI).
 - `budget`: per-run output-token `total`, `spent()`, and `remaining()`.
 - `console`: `log`, `info`, `warn`, `error`, and `debug`, all forwarded as log
   events.
