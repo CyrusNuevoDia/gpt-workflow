@@ -201,6 +201,9 @@ test("artifact events use an allowlist and redact credential-shaped text", async
   const root = await mkdtemp(join(tmpdir(), "gpt-workflow-artifacts-"))
   try {
     const writer = new VerificationArtifactWriter("run", root)
+    expect(writer.directory).toBe(
+      resolve(root, ".codex", "workflows", "runs", "run")
+    )
     await writer.open()
     writer.appendEvent("workflow.agent.event", {
       delta: "Bearer sk-test-secret-value",
@@ -238,11 +241,11 @@ test("secret scanner recognizes major credential families", () => {
 test("browser-proof hash binds R15 to the exact report", async () => {
   const root = await mkdtemp(join(tmpdir(), "gpt-workflow-browser-proof-"))
   const runId = "phase6-proof"
-  const artifactDirectory = join(root, ".verification-artifacts", runId)
-  const reportPath = join(artifactDirectory, "report.json")
+  const runDirectory = join(root, ".codex", "workflows", "runs", runId)
+  const reportPath = join(runDirectory, "report.json")
   const proofPath = join(root, "browser-proof.json")
   try {
-    await mkdir(artifactDirectory, { recursive: true })
+    await mkdir(runDirectory, { recursive: true })
     await writeFile(reportPath, '{"verifierRunId":"phase6-proof"}\n')
     const proof = {
       checkedAt: "2026-07-12T00:00:00.000Z",

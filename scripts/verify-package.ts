@@ -20,7 +20,6 @@ type PackResult = {
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const distPath = join(repository, "dist")
 const buildInfoPath = join(repository, "tsconfig.tsbuildinfo")
-const artifactsPath = join(repository, ".verification-artifacts")
 
 const publicValueExports =
   "AppServerClient AppServerError AppServerModelError AppServerProcessError AppServerProtocolError AppServerRemoteError AppServerResultError AppServerTimeoutError AppServerTurnError BUILTIN_AGENT_DEFINITIONS JSONBoundaryError REQUIRED_APP_SERVER_MODELS WorkflowLoadError listRunSummaries parseWorkflowJournalEntry parseWorkflowScript readRunStatus resolveAgentType runWorkflowScript".split(
@@ -225,8 +224,7 @@ async function assertNoDebris(): Promise<void> {
   const leftovers = [
     ...((await exists(distPath)) ? ["dist"] : []),
     ...((await exists(buildInfoPath)) ? ["tsconfig.tsbuildinfo"] : []),
-    ...rootTarballs,
-    ...((await exists(artifactsPath)) ? [".verification-artifacts"] : [])
+    ...rootTarballs
   ]
   if (leftovers.length > 0) {
     throw new Error(
@@ -240,11 +238,6 @@ async function verify(): Promise<{ paths: string[]; tarball: string }> {
   let failure: unknown
   let result: { paths: string[]; tarball: string } | undefined
   try {
-    if (await exists(artifactsPath)) {
-      throw new Error(
-        "preexisting .verification-artifacts is forbidden and will not be deleted"
-      )
-    }
     tempRoot = await mkdtemp(join(tmpdir(), "gpt-workflow-package-"))
     const cache = join(tempRoot, "npm-cache")
     const packDirectory = join(tempRoot, "pack")

@@ -58,6 +58,7 @@ import { checkMirror } from "./mirror.js"
 const execFileAsync = promisify(execFile)
 const repository = resolve(process.cwd())
 const workflowDirectory = join(repository, ".codex", "workflows")
+const runsDirectory = join(workflowDirectory, "runs")
 const INTERRUPTED_PATTERN = /interrupt|cancel/i
 const INTERRUPT_PATTERN = /interrupt/i
 const OFFLINE_TOTALS_PATTERN =
@@ -172,8 +173,7 @@ async function runInvocation(
           )
         ),
       runDirectory: join(
-        writer.directory,
-        "workflows",
+        runsDirectory,
         isResume ? resumeRunId : `${writer.verifierRunId}-${plan.id}`
       ),
       workflowDirectory,
@@ -1192,14 +1192,15 @@ async function finalizeFromProof(
 }
 
 async function findLatestProof(): Promise<string | null> {
-  const root = join(repository, ".verification-artifacts")
-  const entries = await readdir(root, { withFileTypes: true }).catch(() => [])
+  const entries = await readdir(runsDirectory, { withFileTypes: true }).catch(
+    () => []
+  )
   const candidates = (
     await Promise.all(
       entries
         .filter((entry) => entry.isDirectory())
         .map(async (entry) => {
-          const path = join(root, entry.name, "browser-proof.json")
+          const path = join(runsDirectory, entry.name, "browser-proof.json")
           try {
             return { mtime: (await stat(path)).mtimeMs, path }
           } catch {

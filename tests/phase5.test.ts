@@ -291,9 +291,6 @@ test("worktree isolation propagates exact cwd and removes only clean worktrees",
     expect(received[0]?.cwd).toContain(
       `${repository}/.codex/worktrees/${runId}-1`
     )
-    expect(
-      await Bun.file(`${repository}/.verification-artifacts`).exists()
-    ).toBe(false)
     expect(received[0]?.sandbox).toBe("workspace-write")
     expect(received[0]?.cwd).not.toBe(repository)
     const worktrees = await execFileAsync(

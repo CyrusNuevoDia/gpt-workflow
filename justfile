@@ -1,10 +1,6 @@
 check:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    trap 'rm -rf .verification-artifacts' EXIT
     bunx ultracite check
     bun scripts/verify-offline.ts
-    rm -rf .verification-artifacts
     bun scripts/verify-package.ts
 
 fmt:

@@ -811,7 +811,9 @@ export class VerificationArtifactWriter {
     this.verifierRunId = verifierRunId
     this.directory = resolve(
       repository,
-      ".verification-artifacts",
+      ".codex",
+      "workflows",
+      "runs",
       verifierRunId
     )
     this.reportPath = join(this.directory, "report.json")
@@ -937,12 +939,14 @@ export async function validateBrowserProof(
       }
     }
     const reportPath = resolve(proof.reportPath)
-    const artifactRoot = resolve(
+    const verificationRunRoot = resolve(
       repository,
-      ".verification-artifacts",
+      ".codex",
+      "workflows",
+      "runs",
       proof.verifierRunId
     )
-    if (!reportPath.startsWith(`${artifactRoot}/`)) {
+    if (!reportPath.startsWith(`${verificationRunRoot}/`)) {
       return {
         ok: false,
         proof: null,
