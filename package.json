@@ -2,7 +2,7 @@
   "name": "gpt-workflow",
   "description": "Deterministic multi-agent workflows powered by Codex App Server",
   "type": "module",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "packageManager": "bun@1.3.14",
   "repository": {
     "type": "git",
