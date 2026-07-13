@@ -2,7 +2,7 @@
   "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
   "extends": ["ultracite/biome/core"],
   "files": {
-    "includes": ["!!.claude/workflows/*", "!!.codex/workflows/*"]
+    "includes": ["!!.claude/workflows/*", "!!.codex/workflows/*", "!!motion"]
   },
   "linter": {
     "rules": {
