@@ -1,5 +1,11 @@
 # gpt-workflow
 
+## 0.1.2
+
+### Patch Changes
+
+- [`6da7cae`](https://github.com/CyrusNuevoDia/gpt-workflow/commit/6da7cae14b7cb5edef2fa41c89741e05ead0ae0f) Thanks [@CyrusNuevoDia](https://github.com/CyrusNuevoDia)! - Rename the installed skill to `workflow`, align its user-facing name to Workflow, and remove source-repository maintenance instructions from the consumer skill.
+
 ## 0.1.1
 
 ### Patch Changes
