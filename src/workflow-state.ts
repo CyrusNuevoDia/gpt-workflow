@@ -32,7 +32,11 @@ export type WorkflowModelUsage = {
 
 export type WorkflowBudgetState = {
   assertAvailable: () => void
-  recordTokens: (tokens: number, model?: string) => void
+  recordAgentUsage: (
+    agentId: string,
+    outputTokens: number,
+    model?: string
+  ) => void
   remaining: () => number
   spent: () => number
   total: number | null
@@ -148,7 +152,6 @@ export class WorkflowRunState {
   private readonly queue: AgentQueue
   private readonly activeHandles = new Set<AppServerAgentHandle>()
   private worktreeCount = 0
-  private callChain = "v2:root"
 
   constructor(options: WorkflowRunStateOptions) {
     this.workflowRunId = options.workflowRunId
@@ -157,6 +160,10 @@ export class WorkflowRunState {
     this.queue = new AgentQueue(options.caps.maxConcurrentAgents, (peak) => {
       this.usage.peakConcurrentAgents = peak
     })
+    const agentUsage = new Map<
+      string,
+      { model: string; outputTokens: number }
+    >()
     let recordedTokens = 0
     const readSource = (): number => {
       const value =
@@ -181,15 +188,24 @@ export class WorkflowRunState {
           )
         }
       },
-      recordTokens: (tokens, model = "unknown") => {
-        if (!Number.isFinite(tokens) || tokens < 0) {
+      recordAgentUsage: (agentId, outputTokens, model = "unknown") => {
+        if (!Number.isFinite(outputTokens) || outputTokens < 0) {
           throw new TypeError(
             "agent usage tokens must be finite and non-negative"
           )
         }
-        recordedTokens += tokens
-        this.usage.subagentTokens += tokens
-        this.modelBucket(model).subagentTokens += tokens
+        const normalizedModel = model.length > 0 ? model : "unknown"
+        const previous = agentUsage.get(agentId)
+        if (previous) {
+          recordedTokens -= previous.outputTokens
+          this.usage.subagentTokens -= previous.outputTokens
+          this.modelBucket(previous.model).subagentTokens -=
+            previous.outputTokens
+        }
+        agentUsage.set(agentId, { model: normalizedModel, outputTokens })
+        recordedTokens += outputTokens
+        this.usage.subagentTokens += outputTokens
+        this.modelBucket(normalizedModel).subagentTokens += outputTokens
       },
       remaining: () =>
         options.budgetTotal === null
@@ -259,14 +275,6 @@ export class WorkflowRunState {
   nextWorktreeNumber(): number {
     this.worktreeCount += 1
     return this.worktreeCount
-  }
-
-  get currentCallChain(): string {
-    return this.callChain
-  }
-
-  set currentCallChain(value: string) {
-    this.callChain = value
   }
 
   cancel(): void {

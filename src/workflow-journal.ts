@@ -29,10 +29,13 @@ export type WorkflowJournalEntry =
 export class WorkflowJournal {
   readonly directory: string
   readonly path: string
-  private readonly replayEntries: ReplayEntry[]
+  private readonly replayEntries: Map<string, ReplayEntry[]>
   private writeTail: Promise<void> = Promise.resolve()
 
-  private constructor(directory: string, replayEntries: ReplayEntry[]) {
+  private constructor(
+    directory: string,
+    replayEntries: Map<string, ReplayEntry[]>
+  ) {
     this.directory = directory
     this.path = join(directory, "journal.jsonl")
     this.replayEntries = replayEntries
@@ -53,22 +56,16 @@ export class WorkflowJournal {
     return new WorkflowJournal(directory, parseReplayEntries(source))
   }
 
-  keyFor(
-    previousKey: string,
-    prompt: string,
-    options: JSONObject | undefined
-  ): string {
+  keyFor(prompt: string, options: JSONObject | undefined): string {
     const input = stableStringify({
       options: options ?? null,
-      previousKey,
       prompt
     })
-    return `v2:${createHash("sha256").update(input).digest("hex")}`
+    return `v3:${createHash("sha256").update(input).digest("hex")}`
   }
 
-  replay(index: number, key: string): ReplayEntry | null {
-    const entry = this.replayEntries[index]
-    return entry?.key === key ? entry : null
+  replay(key: string): ReplayEntry | null {
+    return this.replayEntries.get(key)?.shift() ?? null
   }
 
   appendStarted(
@@ -111,45 +108,44 @@ export function parseWorkflowJournalEntry(
   return value
 }
 
-function parseReplayEntries(source: string): ReplayEntry[] {
-  const starts = new Map<string, WorkflowJournalStartedEntry[]>()
+function parseReplayEntries(source: string): Map<string, ReplayEntry[]> {
   const results = new Map<string, WorkflowJournalResultEntry[]>()
   const lines = parseJournalLines(source)
   if (!lines) {
-    return []
+    return new Map()
   }
   for (const value of lines) {
-    if (value.type === "started") {
-      const entries = starts.get(value.key) ?? []
-      entries.push(value)
-      starts.set(value.key, entries)
-    } else {
+    if (value.type === "result") {
       const entries = results.get(value.key) ?? []
       entries.push(value)
       results.set(value.key, entries)
     }
   }
 
-  const replay: ReplayEntry[] = []
-  for (const entries of starts.values()) {
-    for (const started of entries) {
-      const matching =
-        results
-          .get(started.key)
-          ?.findIndex((r) => r.agentId === started.agentId) ?? -1
-      if (matching < 0) {
-        continue
-      }
-      const result = results.get(started.key)?.splice(matching, 1)[0]
-      if (!result) {
-        throw new Error("UNEXPECTED EMPTY WORKFLOW JOURNAL RESULT")
-      }
-      replay.push({
-        agentId: started.agentId,
-        key: started.key,
-        result: result.result
-      })
+  const replay = new Map<string, ReplayEntry[]>()
+  for (const value of lines) {
+    if (value.type !== "started") {
+      continue
     }
+    const started = value
+    const matching =
+      results
+        .get(started.key)
+        ?.findIndex((r) => r.agentId === started.agentId) ?? -1
+    if (matching < 0) {
+      continue
+    }
+    const result = results.get(started.key)?.splice(matching, 1)[0]
+    if (!result) {
+      throw new Error("UNEXPECTED EMPTY WORKFLOW JOURNAL RESULT")
+    }
+    const entries = replay.get(started.key) ?? []
+    entries.push({
+      agentId: started.agentId,
+      key: started.key,
+      result: result.result
+    })
+    replay.set(started.key, entries)
   }
   return replay
 }

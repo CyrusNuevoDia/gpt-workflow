@@ -1,5 +1,13 @@
 import { expect, test } from "bun:test"
-import { readdirSync, readFileSync } from "node:fs"
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import type {
+  AppServerAgentHandle,
+  AppServerAgentOptions,
+  AppServerClient,
+  AppServerJSONValue
+} from "../src/app-server.js"
 import {
   type JSONValue,
   parseWorkflowScript,
@@ -130,9 +138,9 @@ test("injects the documented API while removing ambient host bindings", async ()
       ["Bun", false],
       ["Deno", false],
       ["module", false],
-      ["console", false],
+      ["console", true],
       ["fetch", false],
-      ["setTimeout", false],
+      ["setTimeout", true],
       ["performance", false]
     ],
     budgetPrototype: null,
@@ -254,7 +262,6 @@ test("exposes omitted args as undefined", async () => {
 
 test("rejects every non-JSON value at the result boundary", async () => {
   const expressions = [
-    "undefined",
     "function () {}",
     "Symbol('x')",
     "1n",
@@ -273,6 +280,13 @@ test("rejects every non-JSON value at the result boundary", async () => {
       )
     )
   )
+
+  expect(
+    (await runWorkflowScript(script("return undefined"))).result
+  ).toBeNull()
+  expect(
+    (await runWorkflowScript(script("const completed = true"))).result
+  ).toBeNull()
 })
 
 test("validates host-call shapes before invoking host implementations", async () => {
@@ -463,6 +477,26 @@ test("pipeline enforces the same exact 4096-item cap", async () => {
   )
 })
 
+test("pipeline passes raw intermediate values and marshals only final values", async () => {
+  const execution = await runWorkflowScript(
+    script(`
+    return await pipeline(
+      ['map', 'side-effect'],
+      item => item === 'map' ? new Map([['answer', 42]]) : undefined,
+      (previous, item) => item === 'map'
+        ? { isMap: previous instanceof Map, answer: previous.get('answer') }
+        : { receivedUndefined: previous === undefined },
+    )
+  `)
+  )
+
+  expect(execution.result).toEqual([
+    { answer: 42, isMap: true },
+    { receivedUndefined: true }
+  ])
+  expect(execution.failures).toEqual([])
+})
+
 test("phase and log append ordered typed events and preserve phase attribution", async () => {
   const seenAgents: Array<{ prompt: string; phase?: string }> = []
   const execution = await runWorkflowScript(
@@ -497,6 +531,19 @@ test("phase and log append ordered typed events and preserve phase attribution",
     { message: "before", type: "log" },
     { message: "after", type: "log" }
   ])
+})
+
+test("console methods emit log events and setTimeout works", async () => {
+  const execution = await runWorkflowScript(
+    script(`
+    console.log('x', { a: 1 })
+    await new Promise(resolve => setTimeout(resolve, 1))
+    return 'done'
+  `)
+  )
+
+  expect(execution.result).toBe("done")
+  expect(execution.events).toEqual([{ message: 'x {"a":1}', type: "log" }])
 })
 
 test("args, agent, workflow, and budget work with offline stubs and a testable spend source", async () => {
@@ -547,6 +594,171 @@ test("budget without a total reports Infinity remaining", async () => {
     }
   )
   expect(execution.result).toEqual({ isInfinite: true, total: null })
+})
+
+test("budget counts latest cumulative output usage per agent", async () => {
+  const runDirectory = mkdtempSync(join(tmpdir(), "gpt-workflow-budget-"))
+  const usageByPrompt: Record<string, AppServerJSONValue[]> = {
+    first: [
+      {
+        inputTokens: 100,
+        outputTokens: 4,
+        reasoningOutputTokens: 2,
+        totalTokens: 106
+      },
+      {
+        total: {
+          input_tokens: 100,
+          output_tokens: 8,
+          reasoning_output_tokens: 2,
+          total_tokens: 110
+        }
+      }
+    ],
+    second: [{ inputTokens: 50, outputTokens: 5, totalTokens: 55 }]
+  }
+  const appServer = {
+    startAgent: (
+      prompt: string,
+      options: AppServerAgentOptions
+    ): AppServerAgentHandle => {
+      const usages = usageByPrompt[prompt] ?? []
+      for (const usage of usages) {
+        options.eventSink?.({
+          agentId: options.agentId ?? "missing-agent",
+          type: "usage",
+          usage
+        } as never)
+      }
+      return {
+        agentId: options.agentId ?? "missing-agent",
+        eventLog: [],
+        events: {
+          async *[Symbol.asyncIterator]() {
+            // No buffered events are needed by this harness.
+          }
+        },
+        interrupt: async () => undefined,
+        label: null,
+        phase: null,
+        requestedModel: "test-model",
+        resolvedModel: "test-model",
+        result: async () => ({
+          evidence: {
+            itemIds: [],
+            requestedModel: "test-model",
+            resolvedModel: "test-model",
+            terminalStatus: "completed",
+            threadId: `thread-${prompt}`,
+            turnId: `turn-${prompt}`,
+            usage: usages.at(-1) ?? null
+          },
+          result: prompt
+        }),
+        steer: async () => ({ turnId: `turn-${prompt}` }),
+        subscribe: () => () => undefined,
+        threadId: `thread-${prompt}`,
+        turnId: `turn-${prompt}`,
+        workflowRunId: "output-budget"
+      }
+    }
+  } as unknown as AppServerClient
+
+  const execution = await runWorkflowScript(
+    script(`
+      await agent('first', { model: 'test-model' })
+      const afterFirst = budget.spent()
+      await agent('second', { model: 'test-model' })
+      return { afterFirst, afterSecond: budget.spent() }
+    `),
+    {
+      appServer,
+      budget: { spent: 3, total: 100 },
+      runDirectory,
+      workflowRunId: "output-budget"
+    }
+  )
+
+  expect(execution.result).toEqual({ afterFirst: 13, afterSecond: 18 })
+  expect(execution.usage.subagentTokens).toBe(15)
+  expect(execution.usage.modelUsage["test-model"]?.subagentTokens).toBe(15)
+  rmSync(runDirectory, { force: true, recursive: true })
+})
+
+test("streamed usage blocks a later queued agent at the budget cap", async () => {
+  const runDirectory = mkdtempSync(join(tmpdir(), "gpt-workflow-cap-"))
+  const appServer = {
+    startAgent: (
+      prompt: string,
+      options: AppServerAgentOptions
+    ): AppServerAgentHandle => {
+      const usage = { inputTokens: 90, outputTokens: 8, totalTokens: 98 }
+      options.eventSink?.({
+        agentId: options.agentId ?? "missing-agent",
+        type: "usage",
+        usage
+      } as never)
+      return {
+        agentId: options.agentId ?? "missing-agent",
+        eventLog: [],
+        events: {
+          async *[Symbol.asyncIterator]() {
+            // No buffered events are needed by this harness.
+          }
+        },
+        interrupt: async () => undefined,
+        label: null,
+        phase: null,
+        requestedModel: "test-model",
+        resolvedModel: "test-model",
+        result: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 5))
+          return {
+            evidence: {
+              itemIds: [],
+              requestedModel: "test-model",
+              resolvedModel: "test-model",
+              terminalStatus: "completed",
+              threadId: `thread-${prompt}`,
+              turnId: `turn-${prompt}`,
+              usage
+            },
+            result: prompt
+          }
+        },
+        steer: async () => ({ turnId: `turn-${prompt}` }),
+        subscribe: () => () => undefined,
+        threadId: `thread-${prompt}`,
+        turnId: `turn-${prompt}`,
+        workflowRunId: "streamed-cap"
+      }
+    }
+  } as unknown as AppServerClient
+
+  const execution = await runWorkflowScript(
+    script(`
+      const earlier = agent('earlier', { model: 'test-model' })
+      await new Promise(resolve => setTimeout(resolve, 0))
+      let blocked = false
+      try { await agent('queued', { model: 'test-model' }) }
+      catch (error) { blocked = error.message.includes('budget cap reached') }
+      return { blocked, earlier: await earlier, spent: budget.spent() }
+    `),
+    {
+      appServer,
+      budget: { spent: 2, total: 10 },
+      caps: { maxConcurrentAgents: 1 },
+      runDirectory,
+      workflowRunId: "streamed-cap"
+    }
+  )
+
+  expect(execution.result).toEqual({
+    blocked: true,
+    earlier: "earlier",
+    spent: 10
+  })
+  rmSync(runDirectory, { force: true, recursive: true })
 })
 
 test("uncaught workflow errors reject while absorbed failures and false suite results stay visible", async () => {

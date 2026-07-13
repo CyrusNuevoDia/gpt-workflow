@@ -42,7 +42,7 @@ const fakeHandle = (result: JSONValue): AppServerAgentHandle => ({
       terminalStatus: "completed",
       threadId: "fake-thread",
       turnId: "fake-turn",
-      usage: { total: { totalTokens: 7 } }
+      usage: { total: { outputTokens: 7 } }
     },
     result
   }),
@@ -212,12 +212,15 @@ test("lifetime, boundary, and budget caps are explicit and catchable", async () 
 
   const budget = await runWorkflowScript(
     script(`
-    try { await agent('blocked'); return 'missed' }
-    catch (error) { return error.message }
+    try { await agent('blocked'); return { missed: true } }
+    catch (error) { return { message: error.message, name: error.name } }
   `),
     { agent: async () => "never", budget: { total: 0 } }
   )
-  expect(budget.result).toContain("budget cap reached")
+  expect(budget.result).toEqual({
+    message: expect.stringContaining("budget cap reached"),
+    name: "WorkflowCapError"
+  })
   expect(budget.usage.agentCount).toBe(0)
 })
 
@@ -246,11 +249,7 @@ test("cancellation is shared with queued child work", async () => {
     await Promise.resolve()
   }
   controller.abort()
-  const execution = await promise
-  expect(execution.result).toEqual([null, null])
-  expect(
-    execution.failures.every((failure) => failure.message.includes("cancelled"))
-  ).toBe(true)
+  await expect(promise).rejects.toMatchObject({ name: "WorkflowCanceledError" })
 })
 
 test("worktree isolation propagates exact cwd and removes only clean worktrees", async () => {
@@ -290,8 +289,11 @@ test("worktree isolation propagates exact cwd and removes only clean worktrees",
     )
     expect(execution.result).toBe("worktree-ok")
     expect(received[0]?.cwd).toContain(
-      `${repository}/.verification-artifacts/worktrees/${runId}-1`
+      `${repository}/.codex/worktrees/${runId}-1`
     )
+    expect(
+      await Bun.file(`${repository}/.verification-artifacts`).exists()
+    ).toBe(false)
     expect(received[0]?.sandbox).toBe("workspace-write")
     expect(received[0]?.cwd).not.toBe(repository)
     const worktrees = await execFileAsync(
@@ -322,7 +324,7 @@ test("worktree isolation propagates exact cwd and removes only clean worktrees",
         workflowRunId: dirtyRunId
       }
     )
-    const dirtyPath = `${repository}/.verification-artifacts/worktrees/${dirtyRunId}-1`
+    const dirtyPath = `${repository}/.codex/worktrees/${dirtyRunId}-1`
     expect(await readFile(`${dirtyPath}/dirty-marker.txt`, "utf8")).toBe(
       "leave me"
     )
@@ -392,10 +394,165 @@ test("journal replay is byte-identical, repeatable, and invalidates the later pr
       .filter((line) => line.type === "started")
       .map((line) => line.key)
     expect(started).toHaveLength(5)
-    expect(new Set(started).size).toBe(5)
+    expect(new Set(started).size).toBe(4)
     expect(started[3]).not.toBe(started[1])
-    expect(started[4]).not.toBe(started[2])
+    expect(started[4]).toBe(started[2])
     expect(liveCalls).toBe(5)
+  } finally {
+    await rm(directory, { force: true, recursive: true })
+  }
+})
+
+test("agent failures resolve null, remain unmatched, and retry on resume", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gpt-workflow-agent-failure-"))
+  const source = script(`
+    const first = await agent('first')
+    const second = await agent('second')
+    const failed = await agent('failed')
+    return { first, second, failed }
+  `)
+  let failedCalls = 0
+  try {
+    const first = await runWorkflowScript(source, {
+      agent: (prompt) => {
+        if (prompt === "failed") {
+          failedCalls += 1
+          throw new Error("agent broke")
+        }
+        return prompt
+      },
+      runDirectory: directory,
+      workflowRunId: "agent-failure"
+    })
+    expect(first.result).toEqual({
+      failed: null,
+      first: "first",
+      second: "second"
+    })
+    expect(first.failures).toEqual([
+      {
+        agentId: "agent-failure:agent-3",
+        index: 3,
+        kind: "agent",
+        message: "agent broke"
+      }
+    ])
+    const journalBeforeResume = (
+      await readFile(join(directory, "journal.jsonl"), "utf8")
+    )
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { agentId: string; type: string })
+    expect(
+      journalBeforeResume.filter((entry) => entry.type === "started")
+    ).toHaveLength(3)
+    expect(
+      journalBeforeResume.filter((entry) => entry.type === "result")
+    ).toHaveLength(2)
+
+    const resumed = await runWorkflowScript(source, {
+      agent: (prompt) => {
+        failedCalls += 1
+        return `${prompt}-retried`
+      },
+      resumeFromRunId: "agent-failure",
+      runDirectory: directory
+    })
+    expect(resumed.result).toEqual({
+      failed: "failed-retried",
+      first: "first",
+      second: "second"
+    })
+    expect(resumed.usage).toMatchObject({
+      liveAgentCount: 1,
+      replayedAgentCount: 2
+    })
+    expect(failedCalls).toBe(2)
+  } finally {
+    await rm(directory, { force: true, recursive: true })
+  }
+})
+
+test("auto-injected phases do not invalidate replay keys", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gpt-workflow-phase-replay-"))
+  let liveCalls = 0
+  const agent = (prompt: string) => {
+    liveCalls += 1
+    return prompt
+  }
+  try {
+    await runWorkflowScript(
+      script("return [await agent('A'), await agent('B')]"),
+      {
+        agent,
+        runDirectory: directory,
+        workflowRunId: "phase-replay"
+      }
+    )
+    const resumed = await runWorkflowScript(
+      script("phase('Scan'); return [await agent('A'), await agent('B')]"),
+      { agent, resumeFromRunId: "phase-replay", runDirectory: directory }
+    )
+    expect(resumed.result).toEqual(["A", "B"])
+    expect(resumed.usage).toMatchObject({
+      liveAgentCount: 0,
+      replayedAgentCount: 2
+    })
+    expect(liveCalls).toBe(2)
+  } finally {
+    await rm(directory, { force: true, recursive: true })
+  }
+})
+
+test("v3 replay is independent of live pipeline completion order", async () => {
+  const directory = await mkdtemp(
+    join(tmpdir(), "gpt-workflow-pipeline-replay-")
+  )
+  const source = script(`
+    return await pipeline(
+      ['A', 'B'],
+      item => agent(item + ':stage-1'),
+      previous => agent(previous + ':stage-2'),
+    )
+  `)
+  const stageOne = new Map<string, (value: string) => void>()
+  let liveCalls = 0
+  try {
+    const firstPromise = runWorkflowScript(source, {
+      agent: async (prompt) => {
+        liveCalls += 1
+        if (prompt.endsWith(":stage-1")) {
+          return await new Promise<string>((resolve) => {
+            stageOne.set(prompt, resolve)
+            if (stageOne.size === 2) {
+              stageOne.get("B:stage-1")?.("B1")
+              stageOne.get("A:stage-1")?.("A1")
+            }
+          })
+        }
+        return `${prompt}:done`
+      },
+      runDirectory: directory,
+      workflowRunId: "pipeline-order"
+    })
+    const first = await firstPromise
+    expect(first.result).toEqual(["A1:stage-2:done", "B1:stage-2:done"])
+    expect(liveCalls).toBe(4)
+
+    const resumed = await runWorkflowScript(source, {
+      agent: () => {
+        liveCalls += 1
+        return "unexpected-live"
+      },
+      resumeFromRunId: "pipeline-order",
+      runDirectory: directory
+    })
+    expect(resumed.result).toEqual(first.result)
+    expect(resumed.usage).toMatchObject({
+      liveAgentCount: 0,
+      replayedAgentCount: 4
+    })
+    expect(liveCalls).toBe(4)
   } finally {
     await rm(directory, { force: true, recursive: true })
   }

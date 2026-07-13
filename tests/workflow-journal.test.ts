@@ -11,22 +11,22 @@ import {
 test("parses one started or result journal record", () => {
   const entries: WorkflowJournalEntry[] = [
     parseWorkflowJournalEntry(
-      '{"type":"started","key":"v2:abc","agentId":"workflow-1:agent-1"}'
+      '{"type":"started","key":"v3:abc","agentId":"workflow-1:agent-1"}'
     ),
     parseWorkflowJournalEntry(
-      '{"type":"result","key":"v2:abc","agentId":"workflow-1:agent-1","result":{"answer":42}}'
+      '{"type":"result","key":"v3:abc","agentId":"workflow-1:agent-1","result":{"answer":42}}'
     )
   ]
 
   expect(entries).toEqual([
     {
       agentId: "workflow-1:agent-1",
-      key: "v2:abc",
+      key: "v3:abc",
       type: "started"
     },
     {
       agentId: "workflow-1:agent-1",
-      key: "v2:abc",
+      key: "v3:abc",
       result: { answer: 42 },
       type: "result"
     }

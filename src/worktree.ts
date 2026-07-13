@@ -30,7 +30,7 @@ export async function createWorkflowWorktree(
 
   const path = resolve(
     repository,
-    ".verification-artifacts",
+    ".codex",
     "worktrees",
     `${safeName(workflowRunId)}-${index}`
   )
