@@ -39,9 +39,9 @@ inputs through `args`, not clocks or randomness.
 
 ## Resume-friendly edits
 
-Place stable expensive calls before volatile synthesis calls. Because replay is
-prefix-based, editing an early call invalidates everything after it. Do not
-reorder calls casually when you intend to reuse a run.
+Journal v3 allows completed calls to reorder while their prompt-and-options keys
+still match. Editing a call creates the first miss and makes that call and every
+later call run live, so place stable expensive work before volatile synthesis.
 
 ## Child workflows
 

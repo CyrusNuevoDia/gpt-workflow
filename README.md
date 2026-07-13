@@ -6,8 +6,8 @@ Workflow scripts keep control flow in JavaScript and delegate judgment through
 
 ## Install
 
-Use Node.js 24 or newer, Bun for the executable, and an installed authenticated
-Codex CLI for live runs.
+Use Bun 1.3 or newer and an installed authenticated Codex CLI for live runs.
+Node.js is not a supported runtime.
 
 ```sh
 bun add --global gpt-workflow
@@ -22,8 +22,9 @@ bun add gpt-workflow
 ## Run and resume
 
 ```sh
-gpt-workflow run .codex/workflows/my-workflow.js
-gpt-workflow run --resume workflow-123 .codex/workflows/my-workflow.js
+gpt-workflow run --default-model gpt-5.6-luna .codex/workflows/my-workflow.js
+gpt-workflow run --default-model gpt-5.6-luna --resume workflow-123 \
+  .codex/workflows/my-workflow.js
 ```
 
 Stdout is ordered NDJSON; human diagnostics go to stderr. Every record includes
@@ -38,10 +39,16 @@ A completed run includes its result, usage, failures, and journal path:
 Capture or filter the stream without breaking it:
 
 ```sh
-gpt-workflow run .codex/workflows/my-workflow.js | tee run.jsonl
-gpt-workflow run .codex/workflows/my-workflow.js | jq -c 'select(.type == "agent.event")'
+gpt-workflow run --default-model gpt-5.6-luna \
+  .codex/workflows/my-workflow.js | tee run.jsonl
+gpt-workflow run --default-model gpt-5.6-luna \
+  .codex/workflows/my-workflow.js | jq -c 'select(.type == "agent.event")'
 jq -r 'select(.type == "run.completed") | .journalPath' run.jsonl
 ```
+
+Agent-side terminal and result failures resolve to `null`, remain visible in
+the run's failures, and are retried on resume. Programmer, setup, cancellation,
+worktree, and transport failures still reject the run.
 
 ## Durable journals
 
@@ -51,9 +58,9 @@ Live runs persist an append-only replay journal at:
 .codex/workflows/runs/<runId>/journal.jsonl
 ```
 
-Resume reuses that run ID and directory. It replays the longest unchanged prefix
-of completed agent calls, then executes and appends from the first changed or
-missing call onward.
+Resume reuses that run ID and directory. Journal v3 matches completed calls by
+an order-independent prompt-and-options key multiset until the first miss, then
+executes that call and every later call live.
 
 Parse large journals one record at a time:
 
@@ -93,12 +100,11 @@ export const meta = {
   description: "Summarize a topic"
 }
 
-return await agent("Summarize " + args.topic, {
-  model: "gpt-5.6-luna"
-})
+return await agent("Summarize " + args.topic)
 `
 
 const client = await AppServerClient.connect({
+  defaultModel: "gpt-5.6-luna",
   requiredModels: REQUIRED_APP_SERVER_MODELS
 })
 

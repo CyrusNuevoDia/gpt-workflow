@@ -15,6 +15,11 @@ These docs describe the implemented Codex runtime and public npm package.
    troubleshooting.
 7. [Codex plugin](07-plugin.md) — repository marketplace installation and the
    bundled skill.
+8. [Claude parity](08-claude-parity.md) — an explicit ledger of matches and
+   known divergences from the Claude Workflow contract.
+
+The bundled skill also includes a concise
+[Claude workflow migration checklist](../skills/workflow/references/migration.md).
 
 The original Claude workflow material used to establish parity is preserved
 separately under [`.claude/workflows/docs/`](../.claude/workflows/docs/). It is

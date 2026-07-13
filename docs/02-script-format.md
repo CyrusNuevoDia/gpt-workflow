@@ -25,19 +25,29 @@ computed properties; the runtime parses it without executing the workflow.
 ## Body and inputs
 
 The body receives these globals: `agent`, `parallel`, `pipeline`, `phase`,
-`log`, `workflow`, `args`, and `budget`. It has no Node.js imports, `process`,
-`require`, timers, network globals, or console. Pass external data through the
-JSON-compatible `args` option.
+`log`, `workflow`, `args`, `budget`, `console`, `setTimeout`, and
+`clearTimeout`. `console.log`, `info`, `warn`, `error`, and `debug` all forward
+their joined arguments as `log` events. The VM has no Node.js imports,
+`process`, `require`, network globals, intervals, or microtask scheduling. Pass
+external data through the JSON-compatible `args` option.
+
+`agent()` can select the built-in `default`, `worker`, or `explorer` definition
+with `agentType`. It can also select a custom definition by the `name` field in
+a project or personal `.codex/agents/*.toml` file.
 
 The returned value becomes `WorkflowExecution.result` and must be valid JSON.
-The same rule applies to agent results, child arguments, parallel slots, and
-pipeline stages. `undefined`, functions, symbols, bigint, cycles, sparse arrays,
-non-finite numbers, accessors, and custom prototypes are rejected.
+A top-level `undefined`, including a missing `return`, is coerced to `null`;
+side-effect-only parallel slots, final pipeline stages, and child workflows do
+the same. Pipeline intermediate values remain raw inside the VM and only each
+item's final value crosses the JSON boundary. Agent results, child arguments,
+parallel final slots, and final results otherwise reject `undefined`, functions,
+symbols, bigint, cycles, sparse arrays, non-finite numbers, accessors, and custom
+prototypes.
 
 ## Determinism
 
-Resume hashes every agent prompt and options together with prior call history.
-The VM therefore rejects ambient entropy:
+Resume hashes each agent prompt with its authored options. The VM still rejects
+ambient entropy:
 
 - `Date.now()` and argumentless `new Date()` throw.
 - `Math.random()` throws.
@@ -52,3 +62,7 @@ Pass timestamps, seeds, and other changing inputs explicitly through `args`.
 `workflow({ scriptPath }, childArgs)` resolves an explicit path. Parent and
 child share the scheduler, agent counter, budget, events, journal, and replay
 chain. Nesting defaults to one child level.
+
+The shared budget counts output tokens reported during the run. Parent and
+child workflows share that per-run pool, but separate sibling workflow
+processes do not share a turn-wide pool.

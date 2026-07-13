@@ -21,13 +21,15 @@ outputs and may contain repository-sensitive information.
 The append-only journal has two record shapes:
 
 ```json
-{"type":"started","key":"v2:...","agentId":"workflow-123:agent-1"}
-{"type":"result","key":"v2:...","agentId":"workflow-123:agent-1","result":{"answer":42}}
+{"type":"started","key":"v3:...","agentId":"workflow-123:agent-1"}
+{"type":"result","key":"v3:...","agentId":"workflow-123:agent-1","result":{"answer":42}}
 ```
 
 `started` is appended before live execution. `result` is appended only after a
-JSON-compatible result is available. An unmatched `started` record therefore
-shows interrupted or failed work. Replayed calls append nothing.
+JSON-compatible result is available. Agent-side failures resolve to `null` but
+leave the `started` unmatched, so resume retries exactly that failed work.
+Replayed calls append nothing. Older v2 journals never match v3 keys and cause
+a full live rerun.
 
 Use `parseWorkflowJournalEntry(line)` on one line at a time. The package does
 not export a whole-file parser because journals can grow across repeated
@@ -35,15 +37,19 @@ resumes. Blank lines are not records; a streaming caller may skip them.
 
 ## Resume semantics
 
-Each key hashes the prompt, options, previous journal key, and format version.
-On resume, the runtime replays completed results in call order until the first
-key mismatch or missing result. That call and every later call execute live.
-This is longest-prefix replay, not an unordered cache.
+Each v3 key is an order-independent stable hash of the prompt and options as
+authored. The runtime injects the current `phase()` only after keying, so adding
+or moving phase lines above an otherwise unchanged call does not invalidate it.
+Completed results form a key multiset: repeated identical calls consume one
+matching result each, and calls may reorder while matches remain. At the first
+missing key or unmatched `started`, that call and every later call execute live,
+even if later journal entries would match. This is key-multiset prefix replay,
+not an unrestricted cache.
 
 CLI resume reuses the prior run ID and run directory:
 
 ```sh
-gpt-workflow run --resume <runId> <script.js>
+gpt-workflow run --default-model <name> --resume <runId> <script.js>
 ```
 
 Library resume uses `resumeFromRunId`; pass the same `runDirectory` only if the
@@ -60,14 +66,26 @@ Codex `threadId` and `turnId` for attribution.
 
 ## Scheduling and failures
 
-All parent and child workflows share one bounded queue. `parallel` and
-`pipeline` convert slot failures to `null` plus `WorkflowFailure`; top-level
-load errors, boundary errors, cancellation, worktree setup failures, and direct
-runtime errors reject the run. CLI failures emit `run.failed`, write a concise
-stderr diagnostic, and exit nonzero.
+All parent and child workflows share one bounded queue. Bare agent-side failures
+become `null` plus a `WorkflowFailure` with `kind: "agent"`; `parallel` and
+`pipeline` likewise convert their own slot failures to `null`. Cancellation
+always rejects the run, including while calls are active inside `parallel` or
+`pipeline`. Top-level load and boundary errors, worktree setup failures, and
+direct runtime errors also reject. Error names survive the VM boundary, so
+callers can distinguish names such as `WorkflowCapError` and
+`WorkflowCanceledError`. CLI failures emit `run.failed`, write a concise stderr
+diagnostic, and exit nonzero.
+
+After a successful workflow execution, an App Server close failure is only a
+stderr diagnostic: the CLI still emits `run.completed` and exits zero.
+
+The run's budget counts output tokens and updates from App Server token-usage
+notifications while agents are active. This lets later calls observe concurrent
+spending before every active call has completed.
 
 ## Worktree isolation
 
 `agent(..., { isolation: "worktree" })` creates a temporary git worktree for
-that call. Clean worktrees are removed; dirty worktrees remain for inspection.
-The repository must have a resolvable `HEAD`.
+that call under `<repo>/.codex/worktrees/<runId>-<n>`. Clean worktrees are
+removed; dirty worktrees remain for inspection. The repository must have a
+resolvable `HEAD`.

@@ -3,8 +3,10 @@
 ## CLI
 
 ```sh
-bunx gpt-workflow@latest run .codex/workflows/<name>.js
-bunx gpt-workflow@latest run --resume <runId> .codex/workflows/<name>.js
+bunx gpt-workflow@latest run --default-model <the model you are running as> \
+  .codex/workflows/<name>.js
+bunx gpt-workflow@latest run --default-model <the model you are running as> \
+  --resume <runId> .codex/workflows/<name>.js
 ```
 
 Stdout is ordered NDJSON and stderr is human diagnostics. Every event includes
@@ -18,13 +20,14 @@ Default storage is
 ## Journal records
 
 ```json
-{"type":"started","key":"v2:...","agentId":"workflow-123:agent-1"}
-{"type":"result","key":"v2:...","agentId":"workflow-123:agent-1","result":{"answer":42}}
+{"type":"started","key":"v3:...","agentId":"workflow-123:agent-1"}
+{"type":"result","key":"v3:...","agentId":"workflow-123:agent-1","result":{"answer":42}}
 ```
 
 `started` precedes a live call. `result` follows successful JSON-compatible
-completion. Replays append nothing. An unmatched `started` record is not a
-cached result.
+completion. Replays append nothing. An unmatched `started` record, including a
+failed agent that returned `null`, is not cached and is retried on resume. v2
+journals never match v3 keys and rerun fully.
 
 ## Constant-memory inspection
 
@@ -49,10 +52,11 @@ for await (const line of lines) {
 
 ## Replay diagnosis
 
-Resume matches completed calls in order using chained prompt-and-option keys.
-The first mismatch or missing result invalidates the rest of the prefix. Compare
-args, prompt bytes, options, and call order. Do not expect a later matching call
-to replay after an earlier miss.
+Resume uses an order-independent multiset of stable prompt-and-authored-options
+keys. Auto-injected phases are excluded, and repeated identical calls consume
+one result each. Reordering matching calls is safe until the first missing key
+or unmatched `started`; that miss makes every later call run live even if a
+matching journal result exists. Compare args, prompt bytes, and authored options.
 
 Codex App Server persists full underlying threads separately. Use normalized
 agent events and their `threadId` / `turnId` for correlation; do not parse

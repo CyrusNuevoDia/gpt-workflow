@@ -26,6 +26,26 @@
 Default caps are 1000 lifetime agents, 4096 boundary items, one child-workflow
 level, and concurrent agents equal to `min(16, max(1, CPU count - 2))`.
 
+`AppServerClientOptions.defaultModel` supplies the model for `agent()` calls
+that omit `options.model`; explicit call options override it. Agent-side
+terminal or result failures resolve to `null` and are recorded with
+`kind: "agent"`, while setup, model, budget, cancellation, worktree, and
+transport/protocol failures throw. Structured output receives up to two
+corrective turns on the same thread. Codex receives a strict-schema-normalized
+copy while local validation uses the caller's original schema.
+
+`agentType` resolves the built-in `default`, `worker`, or `explorer` definition,
+or a custom type named in project or personal `.codex/agents/*.toml`. Explicit
+call options override definition values, which override client defaults.
+
+The per-run budget counts output tokens and updates from token-usage events
+while agents are active. It is shared with child workflows, not with sibling
+workflow processes across the surrounding turn.
+
+For CLI runs, pass the invoking agent's current model with
+`--default-model <the model you are running as>`. Per-call `model` options are
+then optional and remain overrides.
+
 The root package also exports App Server client/error values, JSON and runtime
 types, usage/cap types, and `WorkflowJournalEntry` with its started/result member
 types.

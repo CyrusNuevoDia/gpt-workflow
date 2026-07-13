@@ -6,8 +6,8 @@ Codex threads.
 
 ## Requirements and installation
 
-Use Node.js 24 or newer, Bun for the executable, and an installed authenticated
-Codex CLI for live runs.
+Use Bun 1.3 or newer and an installed authenticated Codex CLI for live runs.
+Node.js is not a supported runtime.
 
 ```sh
 bun add --global gpt-workflow
@@ -33,8 +33,7 @@ const files = args.files
 const summaries = await parallel(
   files.map((file) => () =>
     agent(`Read ${file} and return three factual bullets.`, {
-      label: `summarize:${file}`,
-      model: "gpt-5.6-luna"
+      label: `summarize:${file}`
     })
   )
 )
@@ -48,8 +47,17 @@ boundary. It is not a security sandbox for hostile JavaScript.
 ## Run and inspect it
 
 ```sh
-gpt-workflow run .codex/workflows/summarize-files.js
+gpt-workflow run --default-model gpt-5.6-luna \
+  .codex/workflows/summarize-files.js
 ```
+
+`--default-model` supplies the model for calls that omit `options.model`.
+Explicit per-call models still override it. Without either, `agent()` fails.
+Live agents use the directory where the CLI was invoked as their default
+working directory, so repository-relative prompt paths resolve from there.
+Use `agentType: "default"`, `"worker"`, or `"explorer"` for a built-in agent
+definition. Project and personal `.codex/agents/*.toml` files can define custom
+types; see the [API reference](03-api.md#agent-type-registry).
 
 Stdout is ordered NDJSON. Every record includes `schemaVersion`, `sequence`,
 `runId`, `scriptPath`, `runDirectory`, and `type`. Human diagnostics go to
@@ -65,7 +73,8 @@ The terminal `run.completed` record contains `result`, `usage`, `failures`, and
 Capture the stream without corrupting it:
 
 ```sh
-gpt-workflow run .codex/workflows/summarize-files.js | tee run.jsonl
+gpt-workflow run --default-model gpt-5.6-luna \
+  .codex/workflows/summarize-files.js | tee run.jsonl
 jq -r 'select(.type == "run.completed") | .journalPath' run.jsonl
 ```
 
@@ -74,12 +83,13 @@ jq -r 'select(.type == "run.completed") | .journalPath' run.jsonl
 Reuse the `runId` from the original stream:
 
 ```sh
-gpt-workflow run --resume workflow-123 .codex/workflows/summarize-files.js
+gpt-workflow run --default-model gpt-5.6-luna --resume workflow-123 \
+  .codex/workflows/summarize-files.js
 ```
 
-Resume reads the same journal and replays the longest unchanged prefix of
-completed `agent()` calls. The first changed or missing call and all later calls
-run live and append new records to the same journal.
+Resume reads the same journal and matches completed `agent()` calls from a key
+multiset. Matching is order-independent until the first miss; that call and all
+later calls run live and append new records to the same journal.
 
 ## Parse large journals
 
@@ -113,6 +123,7 @@ import {
 } from "gpt-workflow"
 
 const client = await AppServerClient.connect({
+  defaultModel: "gpt-5.6-luna",
   requiredModels: REQUIRED_APP_SERVER_MODELS
 })
 
