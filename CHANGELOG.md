@@ -1,5 +1,11 @@
 # gpt-workflow
 
+## 0.3.0
+
+### Minor Changes
+
+- [`e74bde8`](https://github.com/CyrusNuevoDia/gpt-workflow/commit/e74bde8dad378e34fbce08a0b4fb5b478111e88a) Thanks [@CyrusNuevoDia](https://github.com/CyrusNuevoDia)! - Add `list` and `status` commands for inspecting workflow runs, plus JSON `--args` support on `run`. Runs now include timestamps and workflow metadata in their NDJSON stream while persisting a filtered, ordered `events.jsonl` stream for durable status reconstruction.
+
 ## 0.2.0
 
 ### Minor Changes
