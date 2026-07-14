@@ -1,12 +1,6 @@
 import React from "react";
-import {
-  AbsoluteFill,
-  Easing,
-  interpolate,
-  useCurrentFrame,
-  useVideoConfig,
-} from "remotion";
-import { fontMono, ink, ink2, ink3, paper, paperNoise, rule } from "./theme";
+import { Easing, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
+import { fontMono, ink, ink3, line, white } from "./theme";
 
 export const easeOut = Easing.out(Easing.cubic);
 
@@ -31,86 +25,69 @@ export const fadeUp = (
   };
 };
 
-/** Warm paper stock with the grain overlay above everything. */
-export const Paper: React.FC<{ readonly children: React.ReactNode }> = ({
-  children,
-}) => {
-  return (
-    <AbsoluteFill style={{ backgroundColor: paper }}>
-      {children}
-      <AbsoluteFill
-        style={{
-          backgroundImage: paperNoise,
-          backgroundRepeat: "repeat",
-          mixBlendMode: "multiply",
-          opacity: 0.5,
-          pointerEvents: "none",
-        }}
-      />
-    </AbsoluteFill>
-  );
-};
-
-/** Persistent man-page chrome: gpt-workflow(1) masthead and running footer. */
-export const Chrome: React.FC = () => {
-  const row: React.CSSProperties = {
-    display: "flex",
-    justifyContent: "space-between",
-    fontFamily: fontMono,
-    fontSize: 26,
-    letterSpacing: "0.02em",
-  };
-  return (
-    <>
-      <div style={{ position: "absolute", top: 0, left: 96, right: 96 }}>
-        <div
-          style={{
-            ...row,
-            color: ink2,
-            paddingTop: 44,
-            paddingBottom: 20,
-            borderBottom: `1px solid ${rule}`,
-          }}
-        >
-          <span>gpt-workflow(1)</span>
-          <span>User Commands</span>
-          <span>gpt-workflow(1)</span>
-        </div>
-      </div>
-      <div style={{ position: "absolute", bottom: 0, left: 96, right: 96 }}>
-        <div
-          style={{
-            ...row,
-            color: ink3,
-            paddingTop: 20,
-            paddingBottom: 40,
-            borderTop: `1px solid ${rule}`,
-          }}
-        >
-          <span>gpt-workflow</span>
-          <span>2026-07-13</span>
-          <span>github.com/CyrusNuevoDia/gpt-workflow</span>
-        </div>
-      </div>
-    </>
-  );
-};
-
-/** Fade a scene in over its first frames and out over its last. */
-export const SceneFade: React.FC<{
-  readonly duration: number;
-  readonly out?: boolean;
-  readonly children: React.ReactNode;
-}> = ({ duration, out = true, children }) => {
+/** OpenAI-style progressive word reveal: words fade-slide in sequence. */
+export const WordReveal: React.FC<{
+  readonly text: string;
+  readonly start: number;
+  readonly stagger?: number;
+}> = ({ text, start, stagger = 2.5 }) => {
   const frame = useCurrentFrame();
-  const fadeIn = interpolate(frame, [0, 10], [0, 1], clamp);
-  const fadeOut = out
-    ? interpolate(frame, [duration - 14, duration - 2], [1, 0], clamp)
-    : 1;
+  const words = text.split(" ");
   return (
-    <AbsoluteFill style={{ opacity: fadeIn * fadeOut }}>
+    <span>
+      {words.map((word, i) => (
+        <span
+          key={`w-${i}`}
+          style={{
+            display: "inline-block",
+            whiteSpace: "pre",
+            ...fadeUp(frame, start + i * stagger, 12),
+          }}
+        >
+          {word}
+          {i < words.length - 1 ? " " : ""}
+        </span>
+      ))}
+    </span>
+  );
+};
+
+/** White product window with a hairline border and soft shadow. */
+export const TerminalCard: React.FC<{
+  readonly title: string;
+  readonly style?: React.CSSProperties;
+  readonly children: React.ReactNode;
+}> = ({ title, style, children }) => {
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left: 240,
+        right: 240,
+        top: 150,
+        bottom: 150,
+        backgroundColor: white,
+        border: `1px solid ${line}`,
+        borderRadius: 18,
+        boxShadow:
+          "0 30px 80px rgba(23, 21, 15, 0.1), 0 4px 16px rgba(23, 21, 15, 0.06)",
+        overflow: "hidden",
+        ...style,
+      }}
+    >
+      <div
+        style={{
+          padding: "20px 40px",
+          borderBottom: `1px solid ${line}`,
+          fontFamily: fontMono,
+          fontSize: 22,
+          color: ink3,
+        }}
+      >
+        {title}
+      </div>
       {children}
-    </AbsoluteFill>
+    </div>
   );
 };
 

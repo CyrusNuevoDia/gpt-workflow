@@ -1,50 +1,49 @@
 import React from "react";
-import { Series } from "remotion";
-import { Chrome, Paper } from "./ui";
-import { HOOK_DURATION, Hook } from "./scenes/Hook";
-import { TITLE_DURATION, Title } from "./scenes/Title";
-import { ECONOMICS_DURATION, Economics } from "./scenes/Economics";
-import { SYNOPSIS_DURATION, Synopsis } from "./scenes/Synopsis";
-import { STREAM_DURATION, Stream } from "./scenes/Stream";
-import { MIGRATE_DURATION, Migrate } from "./scenes/Migrate";
-import { OUTRO_DURATION, Outro } from "./scenes/Outro";
+import { AbsoluteFill, Series } from "remotion";
+import { HOOK_DURATION, HookCard } from "./scenes/HookCard";
+import { NAME_DURATION, NameCard } from "./scenes/NameCard";
+import { OUTRO_DURATION, OutroScene } from "./scenes/OutroScene";
+import { PUNCH_DURATION, PunchCard } from "./scenes/PunchCard";
+import { RUN_DURATION, RunScene } from "./scenes/RunScene";
+import { TEASER_DURATION, Teaser } from "./scenes/Teaser";
+import { WORKFLOW_DURATION, WorkflowScene } from "./scenes/WorkflowScene";
+import { stage } from "./theme";
 
 export const LAUNCH_DURATION =
+  TEASER_DURATION +
   HOOK_DURATION +
-  TITLE_DURATION +
-  ECONOMICS_DURATION +
-  SYNOPSIS_DURATION +
-  STREAM_DURATION +
-  MIGRATE_DURATION +
+  NAME_DURATION +
+  WORKFLOW_DURATION +
+  RUN_DURATION +
+  PUNCH_DURATION +
   OUTRO_DURATION;
 
 export const Launch: React.FC = () => {
   return (
-    <Paper>
-      <Chrome />
+    <AbsoluteFill style={{ backgroundColor: stage }}>
       <Series>
+        <Series.Sequence durationInFrames={TEASER_DURATION}>
+          <Teaser />
+        </Series.Sequence>
         <Series.Sequence durationInFrames={HOOK_DURATION}>
-          <Hook />
+          <HookCard />
         </Series.Sequence>
-        <Series.Sequence durationInFrames={TITLE_DURATION}>
-          <Title />
+        <Series.Sequence durationInFrames={NAME_DURATION}>
+          <NameCard />
         </Series.Sequence>
-        <Series.Sequence durationInFrames={ECONOMICS_DURATION}>
-          <Economics />
+        <Series.Sequence durationInFrames={WORKFLOW_DURATION}>
+          <WorkflowScene />
         </Series.Sequence>
-        <Series.Sequence durationInFrames={SYNOPSIS_DURATION}>
-          <Synopsis />
+        <Series.Sequence durationInFrames={RUN_DURATION}>
+          <RunScene />
         </Series.Sequence>
-        <Series.Sequence durationInFrames={STREAM_DURATION}>
-          <Stream />
-        </Series.Sequence>
-        <Series.Sequence durationInFrames={MIGRATE_DURATION}>
-          <Migrate />
+        <Series.Sequence durationInFrames={PUNCH_DURATION}>
+          <PunchCard />
         </Series.Sequence>
         <Series.Sequence durationInFrames={OUTRO_DURATION}>
-          <Outro />
+          <OutroScene />
         </Series.Sequence>
       </Series>
-    </Paper>
+    </AbsoluteFill>
   );
 };
