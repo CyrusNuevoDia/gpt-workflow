@@ -1,5 +1,11 @@
 # gpt-workflow
 
+## 0.3.3
+
+### Patch Changes
+
+- [`f55f68d`](https://github.com/CyrusNuevoDia/gpt-workflow/commit/f55f68d2567fe5463a8c5b5b7953e20197849d41) Thanks [@CyrusNuevoDia](https://github.com/CyrusNuevoDia)! - Raise the CLI's default agent turn timeout from two minutes to five minutes.
+
 ## 0.3.2
 
 ### Patch Changes
