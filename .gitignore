@@ -34,3 +34,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .DS_Store
 
 /.codex/workflows/runs/
+
+# large local media
+/docs/launch/video.mp4
+/video/public/milky-way.png
