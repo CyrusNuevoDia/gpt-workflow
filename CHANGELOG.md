@@ -1,5 +1,11 @@
 # gpt-workflow
 
+## 0.3.1
+
+### Patch Changes
+
+- [`912bf7f`](https://github.com/CyrusNuevoDia/gpt-workflow/commit/912bf7f7fcbcc56bb9d698f331aa66fa913d6777) Thanks [@CyrusNuevoDia](https://github.com/CyrusNuevoDia)! - Publish the launch documentation refresh.
+
 ## 0.3.0
 
 ### Minor Changes
