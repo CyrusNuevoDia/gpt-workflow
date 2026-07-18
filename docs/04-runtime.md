@@ -65,11 +65,16 @@ not an unrestricted cache.
 CLI resume reuses the prior run ID and run directory:
 
 ```sh
-gpt-workflow run --default-model <name> --resume <runId> <script.js>
+gpt-workflow run --default-model <name> --turn-timeout-ms <ms> --resume <runId> <script.js>
 ```
 
 Library resume uses `resumeFromRunId`; pass the same `runDirectory` only if the
 original run used a custom location.
+
+Long-running agent turns can override the App Server turn timeout with
+`--turn-timeout-ms`. It defaults to `120000` (two minutes) and accepts only a
+finite positive integer. For example, use `--turn-timeout-ms 1800000` for a
+30-minute timeout.
 
 ## Codex thread persistence
 

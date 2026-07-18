@@ -9,6 +9,7 @@
 | Items in one `parallel` or `pipeline` call | 4096 |
 | Child workflow depth | 1 |
 | App Server `thread/start` timeout | 120,000 ms |
+| App Server agent turn timeout | 120,000 ms |
 
 All cap overrides must be positive safe integers. A budget total must be null or
 a finite non-negative number.
@@ -50,6 +51,9 @@ is recorded.
 
 ## CLI argument and inspection failures
 
+- `--turn-timeout-ms` overrides the App Server timeout for each agent turn. It
+  must be a finite positive integer; invalid values are usage errors that exit
+  1 before the CLI creates a run or emits NDJSON. The default is `120000` ms.
 - `--args` accepts strict JSON only. Anything `JSON.parse` rejects is a usage
   error: the CLI writes `--args must be valid JSON: ...` to stderr and exits
   1 without emitting any NDJSON record, so there is no `run.started` and

@@ -16,7 +16,7 @@ import {
 } from "./runtime.js"
 
 const USAGE = `Usage:
-  gpt-workflow run [--default-model <name>] [--resume <runId>] [--args <json>] <script.js>
+  gpt-workflow run [--default-model <name>] [--turn-timeout-ms <ms>] [--resume <runId>] [--args <json>] <script.js>
   gpt-workflow list
   gpt-workflow status <runId>
 
@@ -25,6 +25,7 @@ human-readable diagnostics are written to stderr. List writes one JSON object
 per run; status writes one JSON object.
 `
 const RUN_ID_PATTERN = /^[A-Za-z0-9._-]+$/
+const DEFAULT_TURN_TIMEOUT_MS = 120_000
 const PERSISTED_AGENT_EVENT_TYPES = new Set([
   "collaboration",
   "error",
@@ -38,7 +39,10 @@ type CLIClient = Pick<AppServerClient, "close" | "startAgent">
 
 type CLIDependencies = {
   appendFile: (path: string, contents: string) => Promise<void>
-  connect: (options: { defaultModel?: string }) => Promise<CLIClient>
+  connect: (options: {
+    defaultModel?: string
+    turnTimeoutMs: number
+  }) => Promise<CLIClient>
   cwd: () => string
   listRuns: typeof listRunSummaries
   makeRunId: () => string
@@ -58,10 +62,11 @@ const defaultDependencies: CLIDependencies = {
   appendFile: async (path, contents) => {
     await appendFile(path, contents)
   },
-  connect: ({ defaultModel }) =>
+  connect: ({ defaultModel, turnTimeoutMs }) =>
     AppServerClient.connect({
       requiredModels: REQUIRED_APP_SERVER_MODELS,
-      ...(defaultModel === undefined ? {} : { defaultModel })
+      ...(defaultModel === undefined ? {} : { defaultModel }),
+      turnTimeoutMs
     }),
   cwd: () => process.cwd(),
   listRuns: listRunSummaries,
@@ -95,7 +100,8 @@ export function runCLI(
         args: { type: "string" },
         "default-model": { type: "string" },
         help: { short: "h", type: "boolean" },
-        resume: { type: "string" }
+        resume: { type: "string" },
+        "turn-timeout-ms": { type: "string" }
       },
       strict: true
     })
@@ -145,7 +151,7 @@ export function runCLI(
     return Promise.resolve(
       usageError(
         dependencies,
-        "expected exactly: gpt-workflow run [--default-model <name>] [--resume <runId>] [--args <json>] <script.js>"
+        "expected exactly: gpt-workflow run [--default-model <name>] [--turn-timeout-ms <ms>] [--resume <runId>] [--args <json>] <script.js>"
       )
     )
   }
@@ -216,6 +222,20 @@ async function runWorkflowCommand(
   const defaultModelValue = values["default-model"]
   const defaultModel =
     typeof defaultModelValue === "string" ? defaultModelValue : undefined
+  const turnTimeoutValue = values["turn-timeout-ms"]
+  const turnTimeoutMs =
+    turnTimeoutValue === undefined
+      ? DEFAULT_TURN_TIMEOUT_MS
+      : Number(turnTimeoutValue)
+  if (
+    !(Number.isFinite(turnTimeoutMs) && Number.isInteger(turnTimeoutMs)) ||
+    turnTimeoutMs <= 0
+  ) {
+    return usageError(
+      dependencies,
+      "--turn-timeout-ms must be a finite positive integer"
+    )
+  }
   const runId = resumeFromRunId ?? dependencies.makeRunId()
   const invocationDirectory = dependencies.cwd()
   const scriptPath = resolve(invocationDirectory, scriptArgument)
@@ -295,7 +315,7 @@ async function runWorkflowCommand(
     startAgent: async (
       ...agentArgs: Parameters<AppServerClient["startAgent"]>
     ) => {
-      clientPromise ??= dependencies.connect({ defaultModel })
+      clientPromise ??= dependencies.connect({ defaultModel, turnTimeoutMs })
       return (await clientPromise).startAgent(...agentArgs)
     }
   } as AppServerClient
@@ -349,7 +369,8 @@ function hasRunOptions(
   return (
     values.args !== undefined ||
     values["default-model"] !== undefined ||
-    values.resume !== undefined
+    values.resume !== undefined ||
+    values["turn-timeout-ms"] !== undefined
   )
 }
 

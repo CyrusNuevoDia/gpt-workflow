@@ -44,7 +44,10 @@ describe("run", () => {
       ["run", "--default-model", "requested-default", "workflow.js"],
       {
         connect: (options) => {
-          expect(options).toEqual({ defaultModel: "requested-default" })
+          expect(options).toEqual({
+            defaultModel: "requested-default",
+            turnTimeoutMs: 120_000
+          })
           return Promise.resolve({
             close: () => {
               closed += 1
@@ -168,6 +171,35 @@ describe("run", () => {
     expect(output).toEqual([])
     expect(errors.join("")).toContain("--args must be valid JSON")
     expect(errors.join("")).toContain("Usage:")
+  })
+
+  test("passes an explicit turn timeout to the App Server client", async () => {
+    const cwd = await makeTemporaryDirectory()
+    const exitCode = await runCLI(
+      ["run", "--turn-timeout-ms", "1800000", "workflow.js"],
+      {
+        connect: (options) => {
+          expect(options).toEqual({
+            defaultModel: undefined,
+            turnTimeoutMs: 1_800_000
+          })
+          return Promise.resolve({
+            close: () => Promise.resolve(),
+            startAgent: () => Promise.resolve(undefined as never)
+          })
+        },
+        cwd: () => cwd,
+        readSource: () => Promise.resolve(WORKFLOW_SOURCE),
+        runWorkflow: async (_source, options) => {
+          await options.appServer?.startAgent("connect-probe")
+          return execution(options.runDirectory ?? cwd)
+        },
+        writeError: () => undefined,
+        writeOutput: () => undefined
+      }
+    )
+
+    expect(exitCode).toBe(0)
   })
 
   test("passes JSON values verbatim and composes args with resume", async () => {
@@ -395,6 +427,7 @@ describe("usage validation", () => {
     expect(output.join("")).toContain("gpt-workflow list")
     expect(output.join("")).toContain("gpt-workflow status <runId>")
     expect(output.join("")).toContain("--args <json>")
+    expect(output.join("")).toContain("--turn-timeout-ms <ms>")
 
     const invalidOutput: string[] = []
     const errors: string[] = []
@@ -406,6 +439,36 @@ describe("usage validation", () => {
     ).toBe(1)
     expect(invalidOutput).toEqual([])
     expect(errors.join("")).toContain("--resume must contain only")
+    expect(errors.join("")).toContain("Usage:")
+  })
+
+  test.each([
+    "0",
+    "-1",
+    "1.5",
+    "Infinity",
+    "NaN"
+  ])("rejects invalid turn timeout %s before starting a run", async (turnTimeout) => {
+    const output: string[] = []
+    const errors: string[] = []
+    const args =
+      turnTimeout === "-1"
+        ? ["run", "--turn-timeout-ms=-1", "workflow.js"]
+        : ["run", "--turn-timeout-ms", turnTimeout, "workflow.js"]
+    expect(
+      await runCLI(args, {
+        connect: () => Promise.reject(new Error("must not connect")),
+        makeRunId: () => {
+          throw new Error("invalid timeout must not mint a run ID")
+        },
+        writeError: (text) => errors.push(text),
+        writeOutput: (text) => output.push(text)
+      })
+    ).toBe(1)
+    expect(output).toEqual([])
+    expect(errors.join("")).toContain(
+      "--turn-timeout-ms must be a finite positive integer"
+    )
     expect(errors.join("")).toContain("Usage:")
   })
 })
