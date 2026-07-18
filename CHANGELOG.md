@@ -1,5 +1,11 @@
 # gpt-workflow
 
+## 0.3.2
+
+### Patch Changes
+
+- [`a40b2f6`](https://github.com/CyrusNuevoDia/gpt-workflow/commit/a40b2f6c8e518368a66be6875784d56844382672) Thanks [@CyrusNuevoDia](https://github.com/CyrusNuevoDia)! - Add `gpt-workflow run --turn-timeout-ms` for workflows with long-running agent turns.
+
 ## 0.3.1
 
 ### Patch Changes
