@@ -8,6 +8,7 @@
 | Agents reserved during one run | 1000 |
 | Items in one `parallel` or `pipeline` call | 4096 |
 | Child workflow depth | 1 |
+| App Server request timeout | 30,000 ms |
 | App Server `thread/start` timeout | 120,000 ms |
 | App Server agent turn timeout (library) | 120,000 ms |
 | App Server agent turn timeout (CLI) | 300,000 ms |
@@ -52,9 +53,19 @@ is recorded.
 
 ## CLI argument and inspection failures
 
-- `--turn-timeout-ms` overrides the App Server timeout for each agent turn. It
-  must be a finite positive integer; invalid values are usage errors that exit
-  1 before the CLI creates a run or emits NDJSON. The default is `300000` ms.
+- `--request-timeout-ms`, `--thread-start-timeout-ms`, and
+  `--turn-timeout-ms` override the corresponding App Server timeouts. Each must
+  be a finite positive integer; invalid values are usage errors that exit 1
+  before the CLI creates a run or emits NDJSON. Their defaults are `30000`,
+  `120000`, and `300000` ms respectively.
+- Repeating `--required-model <name>` replaces the default required model set.
+  An empty name is a usage error. Missing required models fail during App Server
+  connection before the first agent starts.
+- `gpt-workflow models` streams all discovered models as NDJSON and exits 1 with
+  a stderr diagnostic if App Server initialization or model pagination fails.
+- `SIGINT` and `SIGTERM` request graceful cancellation. The CLI writes a signal
+  diagnostic to stderr, interrupts active turns, emits and persists
+  `run.failed`, closes App Server, and exits 1.
 - `--args` accepts strict JSON only. Anything `JSON.parse` rejects is a usage
   error: the CLI writes `--args must be valid JSON: ...` to stderr and exits
   1 without emitting any NDJSON record, so there is no `run.started` and

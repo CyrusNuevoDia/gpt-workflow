@@ -167,7 +167,19 @@ JSON (`--args '"triage"'`); invalid JSON exits 1 with a usage error on stderr
 and emits no records. Live agents default to the CLI invocation directory,
 not the script's directory.
 
-`gpt-workflow list` and `gpt-workflow status <runId>` print the
-[run inspection](#run-inspection) data as JSON on stdout — one line per run
-for `list`, one object for `status` — and spend no model tokens. An unknown
-run ID makes `status` exit 1 with `run not found` on stderr.
+The CLI requires `REQUIRED_APP_SERVER_MODELS` by default. Repeating
+`--required-model <name>` replaces that default set with the supplied model
+names. `--request-timeout-ms`, `--thread-start-timeout-ms`, and
+`--turn-timeout-ms` override their corresponding App Server client timeouts;
+each accepts only a finite positive integer.
+
+`SIGINT` and `SIGTERM` cancel the workflow through its `AbortSignal`, which
+interrupts active App Server turns before the CLI emits and persists
+`run.failed`, closes the client, and exits 1.
+
+`gpt-workflow models` streams every model returned by the fully paginated App
+Server `model/list` method as NDJSON. `gpt-workflow list` and
+`gpt-workflow status <runId>` print the [run inspection](#run-inspection) data
+as JSON on stdout — one line per model or run for `models` and `list`, one
+object for `status`. None spends model tokens. An unknown run ID makes `status`
+exit 1 with `run not found` on stderr.

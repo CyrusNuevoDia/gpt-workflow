@@ -97,6 +97,10 @@ callers can distinguish names such as `WorkflowCapError` and
 `WorkflowCanceledError`. CLI failures emit `run.failed`, write a concise stderr
 diagnostic, and exit nonzero.
 
+The CLI maps `SIGINT` and `SIGTERM` to runtime cancellation. Queued calls reject,
+active App Server turns are interrupted, the terminal `run.failed` record is
+flushed to `events.jsonl`, and the App Server client closes before exit.
+
 After a successful workflow execution, an App Server close failure is only a
 stderr diagnostic: the CLI still emits `run.completed` and exits zero.
 

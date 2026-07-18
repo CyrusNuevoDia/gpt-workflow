@@ -85,6 +85,7 @@ A live run spends model tokens. Resume replays completed calls from the
 journal — their tokens are not spent again — then runs the rest live:
 
 ```sh
+gpt-workflow models
 gpt-workflow run --default-model gpt-5.6-luna \
   --args '{"files":["src/cli.ts","src/runtime.ts"]}' \
   .codex/workflows/summarize-files.js
@@ -102,6 +103,12 @@ substitute the `runId` reported by your original run's records — real IDs
 look like `workflow-<uuid>`; these examples shorten it to `workflow-123`.
 Resume with the same `--args`: changed args change prompts, which miss the
 journal and run live.
+
+`models` prints every model discovered from the authenticated App Server as
+NDJSON without spending model tokens. Run accepts repeatable `--required-model`
+flags plus `--request-timeout-ms`, `--thread-start-timeout-ms`, and
+`--turn-timeout-ms`. `SIGINT` or `SIGTERM` cancels active agents, records a
+terminal failure, flushes persisted events, and exits nonzero.
 
 Stdout is ordered NDJSON; human diagnostics go to stderr. Every record
 includes `schemaVersion`, `sequence`, `runId`, `scriptPath`, `runDirectory`,

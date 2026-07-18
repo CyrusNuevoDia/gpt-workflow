@@ -47,6 +47,7 @@ boundary. It is not a security sandbox for hostile JavaScript.
 ## Run and inspect it
 
 ```sh
+gpt-workflow models
 gpt-workflow run --default-model gpt-5.6-luna \
   --args '{"files":["src/cli.ts","src/runtime.ts"]}' \
   .codex/workflows/summarize-files.js
@@ -69,6 +70,15 @@ Stdout is ordered NDJSON. Every record includes `schemaVersion`, `sequence`,
 `runId`, `scriptPath`, `runDirectory`, `ts` (epoch milliseconds), and `type`.
 The opening `run.started` record carries the script's `meta`. Human
 diagnostics go to stderr.
+
+`models` streams every model discovered from the authenticated App Server as
+NDJSON without spending model tokens. A run requires the package's standard
+model set by default; repeat `--required-model <name>` to replace that set.
+Transport timing can be tuned with `--request-timeout-ms`,
+`--thread-start-timeout-ms`, and `--turn-timeout-ms`.
+
+`SIGINT` and `SIGTERM` cancel queued work, interrupt active agents, emit and
+persist `run.failed`, close the App Server, and exit nonzero.
 
 The terminal `run.completed` record contains `result`, `usage`, `failures`, and
 `journalPath`. The journal lives at:

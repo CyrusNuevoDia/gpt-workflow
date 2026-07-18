@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { REQUIRED_APP_SERVER_MODELS } from "../src/app-server.js"
 import { runCLI } from "../src/cli.js"
 import type {
   WorkflowExecution,
@@ -46,6 +47,9 @@ describe("run", () => {
         connect: (options) => {
           expect(options).toEqual({
             defaultModel: "requested-default",
+            requestTimeoutMs: 30_000,
+            requiredModels: REQUIRED_APP_SERVER_MODELS,
+            threadStartTimeoutMs: 120_000,
             turnTimeoutMs: 300_000
           })
           return Promise.resolve({
@@ -173,14 +177,32 @@ describe("run", () => {
     expect(errors.join("")).toContain("Usage:")
   })
 
-  test("passes an explicit turn timeout to the App Server client", async () => {
+  test("passes explicit App Server controls to the client", async () => {
     const cwd = await makeTemporaryDirectory()
     const exitCode = await runCLI(
-      ["run", "--turn-timeout-ms", "1800000", "workflow.js"],
+      [
+        "run",
+        "--request-timeout-ms",
+        "45000",
+        "--required-model",
+        "model-one",
+        "--required-model",
+        "model-two",
+        "--required-model",
+        "model-one",
+        "--thread-start-timeout-ms",
+        "240000",
+        "--turn-timeout-ms",
+        "1800000",
+        "workflow.js"
+      ],
       {
         connect: (options) => {
           expect(options).toEqual({
             defaultModel: undefined,
+            requestTimeoutMs: 45_000,
+            requiredModels: ["model-one", "model-two"],
+            threadStartTimeoutMs: 240_000,
             turnTimeoutMs: 1_800_000
           })
           return Promise.resolve({
@@ -200,6 +222,50 @@ describe("run", () => {
     )
 
     expect(exitCode).toBe(0)
+  })
+
+  test("cancels an active run on termination and removes signal listeners", async () => {
+    const cwd = await makeTemporaryDirectory()
+    const output: string[] = []
+    const errors: string[] = []
+    let listener: ((signal: "SIGINT" | "SIGTERM") => void) | undefined
+    let stopped = 0
+    const exitCode = await runCLI(["run", "workflow.js"], {
+      cwd: () => cwd,
+      listenForTermination: (received) => {
+        listener = received
+        return () => {
+          stopped += 1
+        }
+      },
+      makeRunId: () => "signal-canceled",
+      readSource: () => Promise.resolve(WORKFLOW_SOURCE),
+      runWorkflow: (_source, options) => {
+        expect(options.signal?.aborted).toBe(false)
+        listener?.("SIGTERM")
+        expect(options.signal?.aborted).toBe(true)
+        const error = new Error("workflow run was cancelled")
+        error.name = "WorkflowCanceledError"
+        return Promise.reject(error)
+      },
+      writeError: (text) => errors.push(text),
+      writeOutput: (text) => output.push(text)
+    })
+
+    expect(exitCode).toBe(1)
+    expect(stopped).toBe(1)
+    expect(parseOutput(output).map(({ type }) => type)).toEqual([
+      "run.started",
+      "run.failed"
+    ])
+    expect(parseOutput(output)[1]?.error).toEqual({
+      message: "workflow run was cancelled",
+      name: "WorkflowCanceledError"
+    })
+    expect(errors.join("")).toBe(
+      "gpt-workflow: received SIGTERM; canceling workflow\n" +
+        "gpt-workflow: workflow run was cancelled\n"
+    )
   })
 
   test("passes JSON values verbatim and composes args with resume", async () => {
@@ -343,6 +409,28 @@ describe("run", () => {
 })
 
 describe("inspection subcommands", () => {
+  test("models streams every discovered App Server model as NDJSON", async () => {
+    const output: string[] = []
+    const errors: string[] = []
+    expect(
+      await runCLI(["models"], {
+        listModels: () =>
+          Promise.resolve([
+            { displayName: "One", id: "model-1", model: "model-one" },
+            { hidden: true, id: "model-2", model: "model-two" }
+          ]),
+        writeError: (text) => errors.push(text),
+        writeOutput: (text) => output.push(text)
+      })
+    ).toBe(0)
+
+    expect(errors).toEqual([])
+    expect(output.map((line) => JSON.parse(line))).toEqual([
+      { displayName: "One", id: "model-1", model: "model-one" },
+      { hidden: true, id: "model-2", model: "model-two" }
+    ])
+  })
+
   test("list and status read persisted run events through the CLI", async () => {
     const cwd = await makeTemporaryDirectory()
     expect(
@@ -425,8 +513,12 @@ describe("usage validation", () => {
     ).toBe(0)
     expect(output.join("")).toContain("gpt-workflow run")
     expect(output.join("")).toContain("gpt-workflow list")
+    expect(output.join("")).toContain("gpt-workflow models")
     expect(output.join("")).toContain("gpt-workflow status <runId>")
     expect(output.join("")).toContain("--args <json>")
+    expect(output.join("")).toContain("--request-timeout-ms <ms>")
+    expect(output.join("")).toContain("--required-model <name>")
+    expect(output.join("")).toContain("--thread-start-timeout-ms <ms>")
     expect(output.join("")).toContain("--turn-timeout-ms <ms>")
 
     const invalidOutput: string[] = []
@@ -439,6 +531,46 @@ describe("usage validation", () => {
     ).toBe(1)
     expect(invalidOutput).toEqual([])
     expect(errors.join("")).toContain("--resume must contain only")
+    expect(errors.join("")).toContain("Usage:")
+  })
+
+  test.each([
+    "request-timeout-ms",
+    "thread-start-timeout-ms",
+    "turn-timeout-ms"
+  ])("rejects invalid --%s before starting a run", async (option) => {
+    const output: string[] = []
+    const errors: string[] = []
+    expect(
+      await runCLI(["run", `--${option}`, "0", "workflow.js"], {
+        makeRunId: () => {
+          throw new Error("invalid timeout must not mint a run ID")
+        },
+        writeError: (text) => errors.push(text),
+        writeOutput: (text) => output.push(text)
+      })
+    ).toBe(1)
+    expect(output).toEqual([])
+    expect(errors.join("")).toContain(
+      `--${option} must be a finite positive integer`
+    )
+    expect(errors.join("")).toContain("Usage:")
+  })
+
+  test("rejects an empty required model before starting a run", async () => {
+    const output: string[] = []
+    const errors: string[] = []
+    expect(
+      await runCLI(["run", "--required-model=", "workflow.js"], {
+        makeRunId: () => {
+          throw new Error("invalid model must not mint a run ID")
+        },
+        writeError: (text) => errors.push(text),
+        writeOutput: (text) => output.push(text)
+      })
+    ).toBe(1)
+    expect(output).toEqual([])
+    expect(errors.join("")).toContain("--required-model must not be empty")
     expect(errors.join("")).toContain("Usage:")
   })
 

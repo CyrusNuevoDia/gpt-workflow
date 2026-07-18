@@ -4,7 +4,11 @@ import { randomUUID } from "node:crypto"
 import { appendFile, mkdir } from "node:fs/promises"
 import { join, resolve } from "node:path"
 import { parseArgs } from "node:util"
-import { AppServerClient, REQUIRED_APP_SERVER_MODELS } from "./app-server.js"
+import {
+  AppServerClient,
+  type AppServerModel,
+  REQUIRED_APP_SERVER_MODELS
+} from "./app-server.js"
 import { listRunSummaries, readRunStatus } from "./run-inspection.js"
 import {
   type JSONValue,
@@ -16,15 +20,28 @@ import {
 } from "./runtime.js"
 
 const USAGE = `Usage:
-  gpt-workflow run [--default-model <name>] [--turn-timeout-ms <ms>] [--resume <runId>] [--args <json>] <script.js>
+  gpt-workflow run [options] <script.js>
   gpt-workflow list
+  gpt-workflow models
   gpt-workflow status <runId>
 
 Run a workflow through Codex App Server. During a run, stdout is NDJSON and
-human-readable diagnostics are written to stderr. List writes one JSON object
-per run; status writes one JSON object.
+human-readable diagnostics are written to stderr.
+
+Run options:
+  --args <json>                  Supply the workflow args global as JSON.
+  --default-model <name>         Default model for agent calls.
+  --request-timeout-ms <ms>      App Server request timeout (default: 30000).
+  --required-model <name>        Required model; repeat to replace defaults.
+  --resume <runId>               Resume a previous workflow run.
+  --thread-start-timeout-ms <ms> Thread-start timeout (default: 120000).
+  --turn-timeout-ms <ms>         Agent-turn timeout (default: 300000).
+
+List and models write one JSON object per line; status writes one JSON object.
 `
 const RUN_ID_PATTERN = /^[A-Za-z0-9._-]+$/
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
+const DEFAULT_THREAD_START_TIMEOUT_MS = 120_000
 const DEFAULT_TURN_TIMEOUT_MS = 300_000
 const PERSISTED_AGENT_EVENT_TYPES = new Set([
   "collaboration",
@@ -37,13 +54,22 @@ const PERSISTED_AGENT_EVENT_TYPES = new Set([
 
 type CLIClient = Pick<AppServerClient, "close" | "startAgent">
 
+type CLIConnectOptions = {
+  defaultModel?: string
+  requestTimeoutMs: number
+  requiredModels: readonly string[]
+  threadStartTimeoutMs: number
+  turnTimeoutMs: number
+}
+
 type CLIDependencies = {
   appendFile: (path: string, contents: string) => Promise<void>
-  connect: (options: {
-    defaultModel?: string
-    turnTimeoutMs: number
-  }) => Promise<CLIClient>
+  connect: (options: CLIConnectOptions) => Promise<CLIClient>
   cwd: () => string
+  listenForTermination: (
+    listener: (signal: "SIGINT" | "SIGTERM") => void
+  ) => () => void
+  listModels: () => Promise<AppServerModel[]>
   listRuns: typeof listRunSummaries
   makeRunId: () => string
   mkdir: (path: string) => Promise<void>
@@ -62,13 +88,39 @@ const defaultDependencies: CLIDependencies = {
   appendFile: async (path, contents) => {
     await appendFile(path, contents)
   },
-  connect: ({ defaultModel, turnTimeoutMs }) =>
+  connect: ({
+    defaultModel,
+    requestTimeoutMs,
+    requiredModels,
+    threadStartTimeoutMs,
+    turnTimeoutMs
+  }) =>
     AppServerClient.connect({
-      requiredModels: REQUIRED_APP_SERVER_MODELS,
       ...(defaultModel === undefined ? {} : { defaultModel }),
+      requestTimeoutMs,
+      requiredModels,
+      threadStartTimeoutMs,
       turnTimeoutMs
     }),
   cwd: () => process.cwd(),
+  listenForTermination: (listener) => {
+    const onSIGINT = () => listener("SIGINT")
+    const onSIGTERM = () => listener("SIGTERM")
+    process.once("SIGINT", onSIGINT)
+    process.once("SIGTERM", onSIGTERM)
+    return () => {
+      process.off("SIGINT", onSIGINT)
+      process.off("SIGTERM", onSIGTERM)
+    }
+  },
+  listModels: async () => {
+    const client = await AppServerClient.connect()
+    try {
+      return await client.listModels()
+    } finally {
+      await client.close()
+    }
+  },
   listRuns: listRunSummaries,
   makeRunId: () => `workflow-${randomUUID()}`,
   mkdir: async (path) => {
@@ -100,7 +152,10 @@ export function runCLI(
         args: { type: "string" },
         "default-model": { type: "string" },
         help: { short: "h", type: "boolean" },
+        "request-timeout-ms": { type: "string" },
+        "required-model": { multiple: true, type: "string" },
         resume: { type: "string" },
+        "thread-start-timeout-ms": { type: "string" },
         "turn-timeout-ms": { type: "string" }
       },
       strict: true
@@ -124,6 +179,14 @@ export function runCLI(
     }
     return runList(dependencies)
   }
+  if (command === "models") {
+    if (positionals.length > 0 || hasRunOptions(parsed.values)) {
+      return Promise.resolve(
+        usageError(dependencies, "expected exactly: gpt-workflow models")
+      )
+    }
+    return runModels(dependencies)
+  }
   if (command === "status") {
     const [runId, ...extra] = positionals
     if (
@@ -143,7 +206,7 @@ export function runCLI(
   }
   if (command !== "run") {
     return Promise.resolve(
-      usageError(dependencies, "expected run, list, or status")
+      usageError(dependencies, "expected run, list, models, or status")
     )
   }
   const [scriptArgument, ...extra] = positionals
@@ -151,11 +214,24 @@ export function runCLI(
     return Promise.resolve(
       usageError(
         dependencies,
-        "expected exactly: gpt-workflow run [--default-model <name>] [--turn-timeout-ms <ms>] [--resume <runId>] [--args <json>] <script.js>"
+        "expected exactly: gpt-workflow run [options] <script.js>"
       )
     )
   }
   return runWorkflowCommand(scriptArgument, parsed.values, dependencies)
+}
+
+async function runModels(dependencies: CLIDependencies): Promise<number> {
+  try {
+    const models = await dependencies.listModels()
+    for (const model of models) {
+      dependencies.writeOutput(`${JSON.stringify(model)}\n`)
+    }
+    return 0
+  } catch (error) {
+    dependencies.writeError(`gpt-workflow: ${describe(error)}\n`)
+    return 1
+  }
 }
 
 async function runList(dependencies: CLIDependencies): Promise<number> {
@@ -219,22 +295,9 @@ async function runWorkflowCommand(
   }
 
   const resumeFromRunId = resumeValue
-  const defaultModelValue = values["default-model"]
-  const defaultModel =
-    typeof defaultModelValue === "string" ? defaultModelValue : undefined
-  const turnTimeoutValue = values["turn-timeout-ms"]
-  const turnTimeoutMs =
-    turnTimeoutValue === undefined
-      ? DEFAULT_TURN_TIMEOUT_MS
-      : Number(turnTimeoutValue)
-  if (
-    !(Number.isFinite(turnTimeoutMs) && Number.isInteger(turnTimeoutMs)) ||
-    turnTimeoutMs <= 0
-  ) {
-    return usageError(
-      dependencies,
-      "--turn-timeout-ms must be a finite positive integer"
-    )
+  const clientOptions = parseClientOptions(values)
+  if (typeof clientOptions === "string") {
+    return usageError(dependencies, clientOptions)
   }
   const runId = resumeFromRunId ?? dependencies.makeRunId()
   const invocationDirectory = dependencies.cwd()
@@ -315,7 +378,7 @@ async function runWorkflowCommand(
     startAgent: async (
       ...agentArgs: Parameters<AppServerClient["startAgent"]>
     ) => {
-      clientPromise ??= dependencies.connect({ defaultModel, turnTimeoutMs })
+      clientPromise ??= dependencies.connect(clientOptions)
       return (await clientPromise).startAgent(...agentArgs)
     }
   } as AppServerClient
@@ -327,6 +390,13 @@ async function runWorkflowCommand(
     await client?.close()
     clientPromise = undefined
   }
+  const abortController = new AbortController()
+  const stopListening = dependencies.listenForTermination((signal) => {
+    dependencies.writeError(
+      `gpt-workflow: received ${signal}; canceling workflow\n`
+    )
+    abortController.abort()
+  })
   try {
     const execution = await dependencies.runWorkflow(source, {
       appServer,
@@ -335,11 +405,13 @@ async function runWorkflowCommand(
       onAgentEvent: (event) => emit({ event, type: "agent.event" }),
       onWorkflowEvent: (event) => emit({ event, type: "workflow.event" }),
       runDirectory,
+      signal: abortController.signal,
       ...(argsValue === undefined ? {} : { args: workflowArgs }),
       ...(resumeFromRunId === undefined
         ? { workflowRunId: runId }
         : { resumeFromRunId })
     })
+    stopListening()
     await closeClient().catch((error) => {
       dependencies.writeError(
         `gpt-workflow: App Server close failed after run completion: ${describe(error)}\n`
@@ -355,6 +427,7 @@ async function runWorkflowCommand(
     })
     return finish(0)
   } catch (error) {
+    stopListening()
     await closeClient().catch(() => undefined)
     const failure = failureRecord(error)
     emit({ error: failure, type: "run.failed" })
@@ -369,8 +442,72 @@ function hasRunOptions(
   return (
     values.args !== undefined ||
     values["default-model"] !== undefined ||
+    values["request-timeout-ms"] !== undefined ||
+    values["required-model"] !== undefined ||
     values.resume !== undefined ||
+    values["thread-start-timeout-ms"] !== undefined ||
     values["turn-timeout-ms"] !== undefined
+  )
+}
+
+function positiveIntegerOption(
+  value: unknown,
+  fallback: number
+): number | null {
+  if (value === undefined) {
+    return fallback
+  }
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && Number.isInteger(parsed) && parsed > 0
+    ? parsed
+    : null
+}
+
+function parseClientOptions(
+  values: ReturnType<typeof parseArgs>["values"]
+): CLIConnectOptions | string {
+  const timeouts = [
+    ["request-timeout-ms", DEFAULT_REQUEST_TIMEOUT_MS],
+    ["thread-start-timeout-ms", DEFAULT_THREAD_START_TIMEOUT_MS],
+    ["turn-timeout-ms", DEFAULT_TURN_TIMEOUT_MS]
+  ] as const
+  const parsedTimeouts = new Map<string, number>()
+  for (const [name, fallback] of timeouts) {
+    const timeout = positiveIntegerOption(values[name], fallback)
+    if (timeout === null) {
+      return `--${name} must be a finite positive integer`
+    }
+    parsedTimeouts.set(name, timeout)
+  }
+  const requiredModelValues = values["required-model"]
+  if (
+    requiredModelValues !== undefined &&
+    !isNonEmptyStringArray(requiredModelValues)
+  ) {
+    return "--required-model must not be empty"
+  }
+  const defaultModelValue = values["default-model"]
+  return {
+    defaultModel:
+      typeof defaultModelValue === "string" ? defaultModelValue : undefined,
+    requestTimeoutMs:
+      parsedTimeouts.get("request-timeout-ms") ?? DEFAULT_REQUEST_TIMEOUT_MS,
+    requiredModels:
+      requiredModelValues === undefined
+        ? REQUIRED_APP_SERVER_MODELS
+        : [...new Set(requiredModelValues)],
+    threadStartTimeoutMs:
+      parsedTimeouts.get("thread-start-timeout-ms") ??
+      DEFAULT_THREAD_START_TIMEOUT_MS,
+    turnTimeoutMs:
+      parsedTimeouts.get("turn-timeout-ms") ?? DEFAULT_TURN_TIMEOUT_MS
+  }
+}
+
+function isNonEmptyStringArray(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.every((model) => typeof model === "string" && model.length > 0)
   )
 }
 
