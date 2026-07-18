@@ -46,7 +46,7 @@ describe("run", () => {
         connect: (options) => {
           expect(options).toEqual({
             defaultModel: "requested-default",
-            turnTimeoutMs: 120_000
+            turnTimeoutMs: 300_000
           })
           return Promise.resolve({
             close: () => {

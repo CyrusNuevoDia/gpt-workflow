@@ -25,7 +25,7 @@ human-readable diagnostics are written to stderr. List writes one JSON object
 per run; status writes one JSON object.
 `
 const RUN_ID_PATTERN = /^[A-Za-z0-9._-]+$/
-const DEFAULT_TURN_TIMEOUT_MS = 120_000
+const DEFAULT_TURN_TIMEOUT_MS = 300_000
 const PERSISTED_AGENT_EVENT_TYPES = new Set([
   "collaboration",
   "error",

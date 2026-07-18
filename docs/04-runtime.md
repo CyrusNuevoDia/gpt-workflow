@@ -72,7 +72,7 @@ Library resume uses `resumeFromRunId`; pass the same `runDirectory` only if the
 original run used a custom location.
 
 Long-running agent turns can override the App Server turn timeout with
-`--turn-timeout-ms`. It defaults to `120000` (two minutes) and accepts only a
+`--turn-timeout-ms`. It defaults to `300000` (five minutes) and accepts only a
 finite positive integer. For example, use `--turn-timeout-ms 1800000` for a
 30-minute timeout.
 
