@@ -1,5 +1,14 @@
 # gpt-workflow
 
+## 0.3.4
+
+### Patch Changes
+
+- 581f00d: Publish the synchronous typed Python SDK with synchronized npm execution,
+  structured status and errors, interruption handling, and local package
+  verification.
+- 73c1ce7: Add model discovery, graceful signal cancellation, and configurable App Server request, thread-start, turn, and required-model controls to the CLI.
+
 ## 0.3.3
 
 ### Patch Changes
