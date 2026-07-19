@@ -32,6 +32,8 @@ judgment.
   configuring caps or events, or checking exact exported interfaces.
 - Read [migration.md](references/migration.md) when porting a Claude Code
   workflow script.
+- Read [python.md](references/python.md) to run or inspect workflows in
+  Python.
 
 ## Choose the right surface
 
