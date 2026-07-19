@@ -57,3 +57,60 @@ until each item's final boundary. `Date.now()`, argumentless `new Date()`, and
 
 Parent and child workflows share the scheduler, caps, budget, agent counter,
 journal, and replay chain.
+
+## Keep application logic outside the workflow
+
+Use JavaScript here to decide which bounded LM calls run, in what order, and when
+judgment is sufficient. Do not turn the workflow into a parser, canonicalizer,
+validator, artifact builder, compiler, or persistent state machine.
+
+Anti-pattern: ask an agent to return known file metadata alongside its judgment,
+then have the workflow validate, normalize, hash, and compile the final artifact.
+That makes deterministic correctness depend on model output and hides several
+restart boundaries inside one run.
+
+Instead, compose three explicit phases in a runbook:
+
+```text
+prepare-manifest script -> review workflow -> collect-results script
+```
+
+The preparation script owns canonical paths, hashes, IDs, and input validation.
+The workflow receives that manifest and asks only for model-owned semantics:
+
+```js
+export const meta = {
+  name: "review-manifest",
+  description: "Review prepared manifest items independently"
+}
+
+const results = await parallel(
+  args.items.map((item) => () =>
+    agent(`Review this content and return only findings and rationale:\n${item.content}`, {
+      label: `review:${item.id}`,
+      schema: {
+        type: "object",
+        properties: {
+          findings: { type: "array", items: { type: "string" } },
+          rationale: { type: "string" }
+        },
+        required: ["findings", "rationale"],
+        additionalProperties: false
+      }
+    })
+  )
+)
+
+return results
+```
+
+Persist this raw workflow result. The collector script associates each position
+with the manifest item, projects only `findings` and `rationale`, rejects invalid
+values, adds the canonical deterministic envelope, and writes the final artifact
+atomically. This preserves what the model actually said without trusting it to
+reproduce facts the system already knows.
+
+Workflow-side conditions remain appropriate when they control LM orchestration,
+such as escalating a low-confidence judgment, stopping after consensus, or
+skipping later agent stages after `null`. If the condition implements a domain
+state transition or compilation rule, put it in the surrounding script instead.

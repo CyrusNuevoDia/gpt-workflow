@@ -17,7 +17,8 @@ judgment.
    package.
 3. Confirm that deterministic multi-agent orchestration is useful. Prefer one
    ordinary Codex task when a single context can solve the work without explicit
-   fan-out, staging, voting, or replay.
+   fan-out, staging, voting, or replay. Use an ordinary script for work whose
+   correctness can be fully specified without model judgment.
 4. Keep new workflow source under `.codex/workflows/<descriptive-name>.js` unless
    the repository establishes another location.
 
@@ -32,10 +33,46 @@ judgment.
 - Read [migration.md](references/migration.md) when porting a Claude Code
   workflow script.
 
+## Choose the right surface
+
+- Use an ordinary Codex task for one bounded, interactive job that fits one
+  context and does not need durable orchestration.
+- Use a deterministic script for parsing, preparation, canonicalization,
+  validation, hashing, artifact construction, state transitions, or compilation.
+- Use a thin workflow for bounded nondeterministic LM orchestration: fan-out,
+  sequencing or voting among LM judgments, attribution, and returning raw
+  model-owned results.
+- Use a runbook when an operation has multiple phases. Let it compose scripts and
+  thin workflows, with explicit durable artifacts between phases.
+
+Treat a workflow that reads like an application, compiler, or state machine as a
+design warning. JavaScript loops and conditions are available so orchestration can
+be deterministic; their availability does not make the workflow the home for all
+deterministic logic.
+
+Prefer boundaries such as **manifest in -> workflow out -> script collect**:
+
+1. A script prepares and validates a canonical input manifest, including known
+   paths, hashes, IDs, and metadata.
+2. The workflow gives agents only the evidence needed for their judgments and
+   returns their raw semantic results with stable attribution.
+3. A collector script validates and projects only allowed semantic fields,
+   canonicalizes them, adds the deterministic envelope, and constructs artifacts
+   or applies state transitions.
+
+Do not ask a model to echo known paths, hashes, IDs, or metadata; echoed values can
+drift and falsely appear model-verified. Preserve the raw model result for audit,
+but derive the canonical artifact deterministically. Make every phase restartable
+and idempotent: keep inputs and raw outputs inspectable, avoid hidden mutable
+state, and make rerunning collection produce the same result.
+
 ## Author the smallest workflow
 
 1. Start with literal `meta` containing a clear `name` and `description`.
-2. Put loops, conditions, fan-out, aggregation, and stop rules in JavaScript.
+2. Put orchestration control flow in JavaScript: bounded loops and conditions
+   around agent calls, fan-out, sequencing, aggregation of LM judgments, and stop
+   or escalation rules. Keep deterministic data processing and artifact semantics
+   in ordinary scripts.
 3. Give each `agent()` one bounded task and a stable label when attribution
    matters. Omit `model` to inherit the CLI or client default; use an explicit
    model only for an intentional per-call override. Built-in agent types are
@@ -47,6 +84,9 @@ judgment.
 5. Pass changing values through `args`; do not use clocks or randomness.
 6. Return JSON-compatible values and handle `null` from failed agents,
    parallel slots, or pipeline items. A top-level `undefined` becomes `null`.
+7. Keep known envelopes outside LM output. Associate a raw result with its
+   manifest item by deterministic position or call-site ID rather than asking the
+   agent to repeat that identity.
 
 ## Run, inspect, and resume
 
