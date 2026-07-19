@@ -1,5 +1,6 @@
 check:
     bunx ultracite check
+    bun scripts/sync-python-version.ts check
     bun scripts/verify-offline.ts
     bun scripts/verify-package.ts
     cd sdks/python && uv sync --frozen

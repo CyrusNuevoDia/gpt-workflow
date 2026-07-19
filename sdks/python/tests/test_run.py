@@ -63,7 +63,7 @@ def test_user_can_forward_every_supported_run_option(
 
     assert json.loads(arguments_path.read_text()) == [
         "--bun",
-        "gpt-workflow@0.3.3",
+        f"gpt-workflow@{gpt_workflow.__version__}",
         "run",
         "--args",
         "null",
@@ -105,7 +105,7 @@ def test_omitted_args_use_exact_pin_without_an_args_flag(
     arguments = json.loads(arguments_path.read_text())
     assert arguments == [
         "--bun",
-        "gpt-workflow@0.3.3",
+        f"gpt-workflow@{gpt_workflow.__version__}",
         "run",
         str(script),
     ]

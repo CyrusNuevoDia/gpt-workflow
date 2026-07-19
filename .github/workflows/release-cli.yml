@@ -4,6 +4,12 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact version commit to build and publish
+        required: false
+        type: string
 
 concurrency:
   group: release-cli-${{ github.ref }}
@@ -11,18 +17,23 @@ concurrency:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   NODE_VERSION: "24"
+  UV_VERSION: "0.11.29"
 
 jobs:
-  release:
+  prepare:
     runs-on: ubuntu-latest
     permissions:
+      actions: write
       contents: write
-      id-token: write
+    outputs:
+      publish: ${{ steps.release.outputs.publish }}
+      release_sha: ${{ steps.release.outputs.release_sha }}
     steps:
       - uses: actions/checkout@v6
         name: checkout
         with:
           fetch-depth: 0
+          ref: ${{ inputs.release_sha || github.sha }}
       - uses: oven-sh/setup-bun@v2
         name: setup[bun]
         with:
@@ -31,6 +42,15 @@ jobs:
         name: setup[node]
         with:
           node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/setup-python@v6
+        name: setup[python]
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        name: setup[uv]
+        with:
+          enable-cache: false
+          version: ${{ env.UV_VERSION }}
       - uses: extractions/setup-just@v4
         name: setup[just]
         with:
@@ -39,52 +59,279 @@ jobs:
         run: bun install --frozen-lockfile
       - name: check
         run: just check
-      - name: version
+      - id: release
+        name: version-or-select-release
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_RELEASE_SHA: ${{ inputs.release_sha }}
         run: |
+          echo "publish=false" >> "$GITHUB_OUTPUT"
+          echo "release_sha=" >> "$GITHUB_OUTPUT"
+
+          if [[ -n "$REQUESTED_RELEASE_SHA" ]]; then
+            actual_sha="$(git rev-parse HEAD)"
+            if [[ "$actual_sha" != "$REQUESTED_RELEASE_SHA" ]]; then
+              echo "Requested release SHA $REQUESTED_RELEASE_SHA, checked out $actual_sha" >&2
+              exit 1
+            fi
+            if compgen -G ".changeset/*.md" > /dev/null; then
+              echo "Release commit still contains changesets" >&2
+              exit 1
+            fi
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "release_sha=$actual_sha" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           if ! compgen -G ".changeset/*.md" > /dev/null; then
-            echo "No changesets present; package is already versioned."
+            echo "No changesets and no requested release SHA; nothing to release."
             exit 0
           fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
           bun changeset version
           bun install --lockfile-only
+          bun scripts/sync-python-version.ts sync
+          just fmt
+          just check
           git add -A
 
           if git diff --cached --quiet; then
-            echo "changeset version produced no changes; nothing to commit."
-            exit 0
+            echo "changeset version produced no changes" >&2
+            exit 1
           fi
 
           git commit -m "chore(release): bump gpt-workflow version"
+          release_sha="$(git rev-parse HEAD)"
           git push origin "HEAD:${GITHUB_REF_NAME}"
-      - name: setup[npm]
-        run: |
-          mkdir -p "$RUNNER_TEMP/npm-wrapper"
-          cat > "$RUNNER_TEMP/npm-wrapper/npm" <<'SCRIPT'
-          #!/usr/bin/env bash
-          exec bunx --bun npm@latest "$@"
-          SCRIPT
-          chmod +x "$RUNNER_TEMP/npm-wrapper/npm"
-          echo "$RUNNER_TEMP/npm-wrapper" >> "$GITHUB_PATH"
-          npm --version
-      - name: publish
+          gh workflow run release-cli.yml \
+            --ref "$GITHUB_REF_NAME" \
+            -f "release_sha=$release_sha"
+          echo "Dispatched publication run for $release_sha"
+
+  build:
+    if: needs.prepare.outputs.publish == 'true'
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.package.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        name: checkout
+        with:
+          ref: ${{ needs.prepare.outputs.release_sha }}
+      - uses: oven-sh/setup-bun@v2
+        name: setup[bun]
+        with:
+          bun-version-file: package.json
+      - uses: actions/setup-node@v6
+        name: setup[node]
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/setup-python@v6
+        name: setup[python]
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        name: setup[uv]
+        with:
+          enable-cache: false
+          version: ${{ env.UV_VERSION }}
+      - uses: extractions/setup-just@v4
+        name: setup[just]
+        with:
+          just-version: "1.40.0"
+      - name: deps
+        run: bun install --frozen-lockfile
+      - name: check
+        run: just check
+      - id: package
+        name: build-release-artifacts
         run: |
           version="$(jq -r '.version' package.json)"
-
-          if npm view "gpt-workflow@$version" version >/dev/null 2>&1; then
-            echo "gpt-workflow@$version is already published; skipping."
-            exit 0
+          if [[ "$version" != "$(sed -n 's/^version = "\([^"]*\)"/\1/p' sdks/python/pyproject.toml | head -1)" ]]; then
+            echo "npm and Python versions differ" >&2
+            exit 1
           fi
+          release_root="$RUNNER_TEMP/release"
+          mkdir -p "$release_root/npm" "$release_root/python" "$release_root/manifest"
+          npm pack --json --pack-destination "$release_root/npm" > "$RUNNER_TEMP/npm-pack.json"
+          uv build --project sdks/python --out-dir "$release_root/python"
+          uv run --project sdks/python twine check "$release_root/python"/*
+          {
+            echo "release_sha=${{ needs.prepare.outputs.release_sha }}"
+            echo "version=$version"
+            sha256sum "$release_root/npm"/* "$release_root/python"/*
+          } > "$release_root/manifest/release.txt"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        name: upload[npm]
+        with:
+          if-no-files-found: error
+          name: npm-package
+          path: ${{ runner.temp }}/release/npm/*.tgz
+      - uses: actions/upload-artifact@v7
+        name: upload[python]
+        with:
+          if-no-files-found: error
+          name: python-package
+          path: |
+            ${{ runner.temp }}/release/python/*.whl
+            ${{ runner.temp }}/release/python/*.tar.gz
+      - uses: actions/upload-artifact@v7
+        name: upload[manifest]
+        with:
+          if-no-files-found: error
+          name: release-manifest
+          path: ${{ runner.temp }}/release/manifest/release.txt
 
-          npm pack --dry-run --json
-          bun changeset publish
-          release_version="gpt-workflow@$version"
-          if ! git rev-parse "$release_version" >/dev/null 2>&1; then
-            git tag "$release_version"
+  publish-npm:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        name: checkout
+        with:
+          ref: ${{ needs.prepare.outputs.release_sha }}
+      - uses: oven-sh/setup-bun@v2
+        name: setup[bun]
+        with:
+          bun-version-file: package.json
+      - uses: actions/setup-node@v6
+        name: setup[node]
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+          registry-url: https://registry.npmjs.org
+      - name: setup[npm]
+        run: npm install --global npm@11.13.0
+      - uses: actions/download-artifact@v8
+        name: download[npm]
+        with:
+          name: npm-package
+          path: ${{ runner.temp }}/release/npm
+      - id: registry
+        name: inspect[npm]
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          response="$RUNNER_TEMP/npm-registry.json"
+          code="$(curl --silent --show-error --output "$response" --write-out '%{http_code}' "https://registry.npmjs.org/gpt-workflow/$VERSION")"
+          if [[ "$code" == "200" ]]; then
+            bun scripts/verify-registry-artifacts.ts npm "$RUNNER_TEMP"/release/npm/*.tgz "$response"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$code" == "404" ]]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "npm registry returned HTTP $code" >&2
+            exit 1
           fi
-          git push origin --tags
+      - if: steps.registry.outputs.publish == 'true'
+        name: publish[npm]
+        run: npm publish "$RUNNER_TEMP"/release/npm/*.tgz
+      - name: verify[npm]
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          response="$RUNNER_TEMP/npm-registry.json"
+          for _ in {1..12}; do
+            code="$(curl --silent --show-error --output "$response" --write-out '%{http_code}' "https://registry.npmjs.org/gpt-workflow/$VERSION")"
+            if [[ "$code" == "200" ]] && bun scripts/verify-registry-artifacts.ts npm "$RUNNER_TEMP"/release/npm/*.tgz "$response"; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "npm did not expose the expected artifact" >&2
+          exit 1
+
+  publish-pypi:
+    needs: [prepare, build, publish-npm]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        name: checkout
+        with:
+          ref: ${{ needs.prepare.outputs.release_sha }}
+      - uses: oven-sh/setup-bun@v2
+        name: setup[bun]
+        with:
+          bun-version-file: package.json
+      - uses: actions/download-artifact@v8
+        name: download[python]
+        with:
+          name: python-package
+          path: dist
+      - id: registry
+        name: inspect[pypi]
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          response="$RUNNER_TEMP/pypi-registry.json"
+          code="$(curl --silent --show-error --output "$response" --write-out '%{http_code}' "https://pypi.org/pypi/gpt-workflow/$VERSION/json")"
+          if [[ "$code" == "200" ]]; then
+            bun scripts/verify-registry-artifacts.ts pypi dist "$response"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$code" == "404" ]]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "PyPI returned HTTP $code" >&2
+            exit 1
+          fi
+      - if: steps.registry.outputs.publish == 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        name: publish[pypi]
+        with:
+          packages-dir: dist
+          password: ${{ secrets.PYPI_TOKEN }}
+          user: __token__
+      - name: verify[pypi]
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          response="$RUNNER_TEMP/pypi-registry.json"
+          for _ in {1..12}; do
+            code="$(curl --silent --show-error --output "$response" --write-out '%{http_code}' "https://pypi.org/pypi/gpt-workflow/$VERSION/json")"
+            if [[ "$code" == "200" ]] && bun scripts/verify-registry-artifacts.ts pypi dist "$response"; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "PyPI did not expose the expected artifacts" >&2
+          exit 1
+
+  finalize:
+    needs: [prepare, build, publish-npm, publish-pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        name: checkout
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.prepare.outputs.release_sha }}
+      - name: tag
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for tag in "gpt-workflow@$VERSION" "v$VERSION"; do
+            if git rev-parse "$tag" >/dev/null 2>&1; then
+              if [[ "$(git rev-list -n 1 "$tag")" != "${{ needs.prepare.outputs.release_sha }}" ]]; then
+                echo "$tag points to an unexpected commit" >&2
+                exit 1
+              fi
+            else
+              git tag "$tag"
+            fi
+            git push origin "refs/tags/$tag"
+          done

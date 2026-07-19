@@ -8,7 +8,6 @@ import subprocess
 import sys
 import tempfile
 import tomllib
-from collections.abc import Mapping
 from pathlib import Path
 
 SDK = Path(__file__).resolve().parents[1]
@@ -19,7 +18,7 @@ EXPECTED_VERSION = "0.3.3"
 def run(
     *command: str,
     cwd: Path = SDK,
-    environment: Mapping[str, str] | None = None,
+    environment: dict[str, str] | None = None,
 ) -> None:
     """Run one verifier command without a shell."""
     subprocess.run(command, check=True, cwd=cwd, env=environment)
@@ -55,9 +54,9 @@ def verify() -> None:
         dist = temp / "dist"
         venv = temp / "venv"
         consumer = temp / "consumer"
-        bun_temp = temp / "bun"
+        bin_directory = temp / "bin"
         consumer.mkdir()
-        bun_temp.mkdir()
+        bin_directory.mkdir()
 
         run("uv", "build", "--out-dir", str(dist))
         artifacts = sorted(
@@ -95,7 +94,12 @@ def verify() -> None:
             "from pathlib import Path\n"
             "import gpt_workflow\n"
             "gpt_workflow.cwd = Path.cwd()\n"
-            "execution = gpt_workflow.run('workflow.js')\n"
+            "execution = gpt_workflow.run(\n"
+            "    'workflow.js',\n"
+            "    request_timeout_ms=45_000,\n"
+            "    thread_start_timeout_ms=240_000,\n"
+            "    turn_timeout_ms=1_800_000,\n"
+            ")\n"
             "assert execution.result == {'answer': 42}\n"
             "assert execution.status.status == 'completed'\n"
             "assert execution.status.result == {'answer': 42}\n"
@@ -104,12 +108,20 @@ def verify() -> None:
             "assert execution.run_directory.parent == "
             "Path.cwd() / '.codex' / 'workflows' / 'runs'\n"
         )
+        bunx = bin_directory / ("bunx.exe" if sys.platform == "win32" else "bunx")
+        bunx.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, sys\n"
+            f"expected = ['--bun', 'gpt-workflow@{version}']\n"
+            "if sys.argv[1:3] != expected:\n"
+            "    raise SystemExit(f'unexpected bunx invocation: {sys.argv[1:]}')\n"
+            f"cli = {str(REPOSITORY / 'src/cli.ts')!r}\n"
+            "os.execvp('bun', ['bun', cli, *sys.argv[3:]])\n"
+        )
+        bunx.chmod(0o755)
         environment = {
             **os.environ,
-            "BUN_INSTALL_CACHE_DIR": str(bun_temp / "install-cache"),
-            "TEMP": str(bun_temp),
-            "TMP": str(bun_temp),
-            "TMPDIR": str(bun_temp),
+            "PATH": f"{bin_directory}{os.pathsep}{os.environ.get('PATH', '')}",
         }
         run(
             str(python),
