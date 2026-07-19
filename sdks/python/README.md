@@ -11,14 +11,12 @@ does not print or retry work automatically.
 - Bun 1.3 or newer
 - an authenticated Codex CLI for workflows that call agents
 
-The Python and npm distributions are synchronized at `0.3.4`. This release
-always executes `bunx --bun gpt-workflow@0.3.4`; it never resolves `@latest` or
-a separately installed `gpt-workflow` executable.
+The Python and npm distributions have synchronized versions.
 
 Install the Python package after it is published:
 
 ```sh
-python -m pip install gpt-workflow==0.3.4
+python -m pip install gpt-workflow
 ```
 
 ## Run and inspect workflows
@@ -63,9 +61,9 @@ This no-agent workflow is deterministic and spends no model tokens:
 ```javascript
 export const meta = {
   name: "python-smoke",
-  description: "Python SDK smoke test"
-}
-return { answer: 42 }
+  description: "Python SDK smoke test",
+};
+return { answer: 42 };
 ```
 
 ## Errors and interruption
