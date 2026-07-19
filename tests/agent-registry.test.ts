@@ -22,11 +22,14 @@ test("resolves all built-in agent definitions", async () => {
 
 test("does not alias Claude agent-type names", async () => {
   await Promise.all(
-    ["Explore", "general-purpose", "Plan"].map((name) =>
-      expect(
-        resolveAgentType(name, { personalDirectory: "/missing" })
-      ).rejects.toThrow(BUILTIN_LIST_PATTERN)
-    )
+    ["Explore", "general-purpose", "Plan"].map(async (name) => {
+      const error = await resolveAgentType(name, {
+        personalDirectory: "/missing"
+      }).catch((cause: unknown) => cause)
+      expect(error).toBeInstanceOf(Error)
+      expect((error as Error).name).toBe("WorkflowArgumentError")
+      expect((error as Error).message).toMatch(BUILTIN_LIST_PATTERN)
+    })
   )
 })
 

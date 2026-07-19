@@ -62,6 +62,13 @@ export class WorkflowCapError extends Error {
   }
 }
 
+export class WorkflowBudgetExceededError extends WorkflowCapError {
+  constructor(message: string) {
+    super(message)
+    this.name = "WorkflowBudgetExceededError"
+  }
+}
+
 class AgentQueue {
   private readonly pending: ScheduledTask[] = []
   private readonly limit: number
@@ -183,7 +190,7 @@ export class WorkflowRunState {
           options.budgetTotal !== null &&
           readSource() + recordedTokens >= options.budgetTotal
         ) {
-          throw new WorkflowCapError(
+          throw new WorkflowBudgetExceededError(
             `agent() budget cap reached: spent=${readSource() + recordedTokens}, total=${options.budgetTotal}`
           )
         }

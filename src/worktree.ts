@@ -10,21 +10,30 @@ export type WorkflowWorktree = {
   readonly path: string
 }
 
+export class WorkflowGitError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options)
+    this.name = "WorkflowGitError"
+  }
+}
+
 export async function createWorkflowWorktree(
   cwd: string,
   workflowRunId: string,
   index: number
 ): Promise<WorkflowWorktree> {
   const repository = await git(cwd, ["rev-parse", "--show-toplevel"]).catch(
-    () => {
-      throw new Error(
-        'Failed to resolve base branch "HEAD": git rev-parse failed'
+    (cause: unknown) => {
+      throw new WorkflowGitError(
+        'Failed to resolve base branch "HEAD": git rev-parse failed',
+        { cause }
       )
     }
   )
-  await git(repository, ["rev-parse", "HEAD"]).catch(() => {
-    throw new Error(
-      'Failed to resolve base branch "HEAD": git rev-parse failed'
+  await git(repository, ["rev-parse", "HEAD"]).catch((cause: unknown) => {
+    throw new WorkflowGitError(
+      'Failed to resolve base branch "HEAD": git rev-parse failed',
+      { cause }
     )
   })
 
@@ -58,10 +67,14 @@ export async function createWorkflowWorktree(
 }
 
 async function git(cwd: string, args: string[]): Promise<string> {
-  const result = await execFileAsync("git", ["-C", cwd, ...args], {
-    encoding: "utf8"
-  })
-  return result.stdout.trim()
+  try {
+    const result = await execFileAsync("git", ["-C", cwd, ...args], {
+      encoding: "utf8"
+    })
+    return result.stdout.trim()
+  } catch (cause) {
+    throw new WorkflowGitError(describeError(cause), { cause })
+  }
 }
 
 function safeName(value: string): string {

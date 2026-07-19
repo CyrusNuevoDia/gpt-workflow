@@ -219,7 +219,7 @@ test("lifetime, boundary, and budget caps are explicit and catchable", async () 
   )
   expect(budget.result).toEqual({
     message: expect.stringContaining("budget cap reached"),
-    name: "WorkflowCapError"
+    name: "WorkflowBudgetExceededError"
   })
   expect(budget.usage.agentCount).toBe(0)
 })
@@ -333,6 +333,27 @@ test("worktree isolation propagates exact cwd and removes only clean worktrees",
     )
   } finally {
     await rm(repository, { force: true, recursive: true })
+  }
+})
+
+test("worktree setup failures retain a structured Git error name", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gpt-workflow-not-git-"))
+  try {
+    await expect(
+      runWorkflowScript(
+        script(
+          `return await agent('worktree', { model: 'gpt-5.6-luna', isolation: 'worktree' })`
+        ),
+        {
+          agent: async () => "unreachable",
+          cwd: directory,
+          runDirectory: join(directory, "run"),
+          workflowRunId: "git-error"
+        }
+      )
+    ).rejects.toMatchObject({ name: "WorkflowGitError" })
+  } finally {
+    await rm(directory, { force: true, recursive: true })
   }
 })
 

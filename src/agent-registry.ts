@@ -12,6 +12,13 @@ export type AgentDefinition = {
   source: "builtin" | "project" | "personal"
 }
 
+export class WorkflowArgumentError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "WorkflowArgumentError"
+  }
+}
+
 export const BUILTIN_AGENT_DEFINITIONS = {
   default: {
     description: "General-purpose fallback",
@@ -73,7 +80,7 @@ export async function resolveAgentType(
       ...customAgents.map((agent) => agent.name)
     ])
   ].sort()
-  throw new Error(
+  throw new WorkflowArgumentError(
     `unknown agent type "${agentType}"; available agent types: ${available.join(", ")}`
   )
 }

@@ -1,3 +1,5 @@
 [tools]
 bun = "latest"
 just = "latest"
+python = "3.12"
+uv = "latest"
