@@ -15,6 +15,8 @@ Compared to driving Codex directly, a workflow adds:
 - **Multi-agent verification** — independent critics and judge panels, where
   a failed call resolves to `null` instead of aborting the fan-out.
 
+[How did I use Codex to build gpt-workflow?](./docs/BUILD.md)
+
 ## Install
 
 Everything requires Bun 1.3 or newer, with the Codex CLI installed and
@@ -53,19 +55,20 @@ Store project workflows under `.codex/workflows/`; this example is
 ```js
 export const meta = {
   name: "summarize-files",
-  description: "Summarize files concurrently and merge the findings"
-}
+  description: "Summarize files concurrently and merge the findings",
+};
 
-const files = args.files
+const files = args.files;
 const summaries = await parallel(
-  files.map((file) => () =>
-    agent(`Read ${file} and return three factual bullets.`, {
-      label: `summarize:${file}`
-    })
+  files.map(
+    (file) => () =>
+      agent(`Read ${file} and return three factual bullets.`, {
+        label: `summarize:${file}`,
+      })
   )
-)
+);
 
-return { summaries: summaries.filter(Boolean) }
+return { summaries: summaries.filter(Boolean) };
 ```
 
 `args` is the run's input; the `--args` flag in the next section supplies it.
@@ -196,8 +199,8 @@ on-disk layout is not a `gpt-workflow` contract.
 import {
   AppServerClient,
   REQUIRED_APP_SERVER_MODELS,
-  runWorkflowScript
-} from "gpt-workflow"
+  runWorkflowScript,
+} from "gpt-workflow";
 
 const source = `
 export const meta = {
@@ -206,21 +209,21 @@ export const meta = {
 }
 
 return await agent("Summarize " + args.topic)
-`
+`;
 
 const client = await AppServerClient.connect({
   defaultModel: "gpt-5.6-luna",
-  requiredModels: REQUIRED_APP_SERVER_MODELS
-})
+  requiredModels: REQUIRED_APP_SERVER_MODELS,
+});
 
 try {
   const execution = await runWorkflowScript(source, {
     appServer: client,
-    args: { topic: "deterministic orchestration" }
-  })
-  console.log(execution.result, execution.journalPath)
+    args: { topic: "deterministic orchestration" },
+  });
+  console.log(execution.result, execution.journalPath);
 } finally {
-  await client.close()
+  await client.close();
 }
 ```
 
