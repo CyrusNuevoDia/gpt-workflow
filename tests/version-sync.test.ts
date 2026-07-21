@@ -28,12 +28,6 @@ async function withRepository(
     'EXPECTED_VERSION = "0.0.1"\n'
   )
   await writeFile(
-    join(sdk, "README.md"),
-    "synchronized at `0.0.1`\n" +
-      "bunx --bun gpt-workflow@0.0.1\n" +
-      "gpt-workflow==0.0.1\n"
-  )
-  await writeFile(
     join(sdk, "uv.lock"),
     '[[package]]\nname = "gpt-workflow"\nversion = "0.0.1"\n'
   )
@@ -67,7 +61,6 @@ test("sync updates every Python release version and is idempotent", async () => 
         "sdks/python/pyproject.toml",
         "sdks/python/src/gpt_workflow/_version.py",
         "sdks/python/scripts/verify-package.py",
-        "sdks/python/README.md",
         "sdks/python/uv.lock"
       ],
       version: "1.2.3"

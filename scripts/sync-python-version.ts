@@ -17,9 +17,6 @@ const VERSION_PATTERN = /^\d+\.\d+\.\d+$/u
 const PROJECT_VERSION_PATTERN = /^version = "[^"]+"$/mu
 const RUNTIME_VERSION_PATTERN = /^VERSION = "[^"]+"$/mu
 const VERIFIER_VERSION_PATTERN = /^EXPECTED_VERSION = "[^"]+"$/mu
-const README_SYNC_VERSION_PATTERN = /synchronized at `[^`]+`/u
-const README_NPM_PIN_PATTERN = /bunx --bun gpt-workflow@[\d.]+/u
-const README_PYPI_PIN_PATTERN = /gpt-workflow==[\d.]+/u
 
 async function canonicalVersion(repository: string): Promise<string> {
   const path = join(repository, "package.json")
@@ -69,8 +66,7 @@ async function desiredFiles(
   const paths = [
     "sdks/python/pyproject.toml",
     "sdks/python/src/gpt_workflow/_version.py",
-    "sdks/python/scripts/verify-package.py",
-    "sdks/python/README.md"
+    "sdks/python/scripts/verify-package.py"
   ]
   const files = await Promise.all(
     paths.map(async (path) => ({
@@ -78,8 +74,8 @@ async function desiredFiles(
       source: await readFile(join(repository, path), "utf8")
     }))
   )
-  const [project, runtime, verifier, readme] = files
-  if (!(project && runtime && verifier && readme)) {
+  const [project, runtime, verifier] = files
+  if (!(project && runtime && verifier)) {
     throw new Error("Python release files are missing")
   }
   project.source = replaceExactly(
@@ -99,24 +95,6 @@ async function desiredFiles(
     verifier.source,
     VERIFIER_VERSION_PATTERN,
     `EXPECTED_VERSION = "${version}"`
-  )
-  readme.source = replaceExactly(
-    readme.path,
-    readme.source,
-    README_SYNC_VERSION_PATTERN,
-    `synchronized at \`${version}\``
-  )
-  readme.source = replaceExactly(
-    readme.path,
-    readme.source,
-    README_NPM_PIN_PATTERN,
-    `bunx --bun gpt-workflow@${version}`
-  )
-  readme.source = replaceExactly(
-    readme.path,
-    readme.source,
-    README_PYPI_PIN_PATTERN,
-    `gpt-workflow==${version}`
   )
   return files
 }
