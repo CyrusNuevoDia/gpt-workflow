@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "gpt-workflow"
-version = "0.3.4"
+version = "0.4.0"
 description = "Typed Python wrapper for deterministic gpt-workflow runs"
 readme = "README.md"
 requires-python = ">=3.12"
