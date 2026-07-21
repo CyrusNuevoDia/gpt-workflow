@@ -91,6 +91,7 @@ def verify() -> None:
             "return { answer: 42 }\n"
         )
         (consumer / "smoke.py").write_text(
+            "import os\n"
             "from pathlib import Path\n"
             "import gpt_workflow\n"
             "gpt_workflow.cwd = Path.cwd()\n"
@@ -105,8 +106,13 @@ def verify() -> None:
             "assert execution.status.result == {'answer': 42}\n"
             "assert execution.status.run_id == execution.run_directory.name\n"
             "assert execution.run_directory.is_dir()\n"
+            "project_key = str(Path.cwd().resolve()).replace('\\\\', '/')\n"
+            "project_key = project_key.replace(':', '-').replace('/', '-')\n"
+            "if not project_key.startswith('-'):\n"
+            "    project_key = f'-{project_key}'\n"
             "assert execution.run_directory.parent == "
-            "Path.cwd() / '.codex' / 'workflows' / 'runs'\n"
+            "Path(os.environ['CODEX_HOME']) / 'projects' / project_key / "
+            "'workflows' / 'python-smoke' / 'runs'\n"
         )
         bunx = bin_directory / ("bunx.exe" if sys.platform == "win32" else "bunx")
         bunx.write_text(
@@ -121,6 +127,7 @@ def verify() -> None:
         bunx.chmod(0o755)
         environment = {
             **os.environ,
+            "CODEX_HOME": str(temp / "codex-home"),
             "PATH": f"{bin_directory}{os.pathsep}{os.environ.get('PATH', '')}",
         }
         run(

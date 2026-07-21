@@ -14,7 +14,7 @@ def test_user_can_run_a_workflow_and_receive_its_persisted_status(
     monkeypatch: object,
 ) -> None:
     run_id = "workflow-python-test"
-    run_directory = tmp_path / ".codex" / "workflows" / "runs" / run_id
+    run_directory = tmp_path / "test-runs" / run_id
     _install_fake_bunx(
         tmp_path,
         monkeypatch,
@@ -149,7 +149,7 @@ def _install_fake_bunx(
         "import json, os, pathlib, sys\n"
         f"arguments_path = {str(arguments_path)!r}\n"
         f"run_id = {run_id!r}\n"
-        "runs = pathlib.Path.cwd() / '.codex' / 'workflows' / 'runs'\n"
+        "runs = pathlib.Path.cwd() / 'test-runs'\n"
         "run_directory = runs / run_id\n"
         "base = {'runId': run_id, 'runDirectory': str(run_directory), "
         "'schemaVersion': 1, 'scriptPath': str(pathlib.Path.cwd() / 'workflow.js')}\n"

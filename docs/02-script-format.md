@@ -18,9 +18,11 @@ export const meta = {
 }
 ```
 
-`name` and `description` are required strings. `whenToUse` and `phases` are
-optional. Metadata cannot call functions, read variables, spread values, or use
-computed properties; the runtime parses it without executing the workflow.
+`name` and `description` are required strings. Because `name` is also the
+workflow's storage directory, it may contain only letters, numbers, periods,
+underscores, and hyphens, and cannot be `.` or `..`. `whenToUse` and `phases`
+are optional. Metadata cannot call functions, read variables, spread values, or
+use computed properties; the runtime parses it without executing the workflow.
 
 ## Body and inputs
 

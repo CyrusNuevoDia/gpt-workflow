@@ -53,12 +53,13 @@ import {
   type WorkflowInvocationPlan,
   type WorkflowInvocationRecord
 } from "../src/verification.js"
+import { workflowRunsDirectory } from "../src/workflow-storage.js"
 import { checkMirror } from "./mirror.js"
 
 const execFileAsync = promisify(execFile)
 const repository = resolve(process.cwd())
 const workflowDirectory = join(repository, ".codex", "workflows")
-const runsDirectory = join(workflowDirectory, "runs")
+const runsDirectory = workflowRunsDirectory(repository, "verification")
 const INTERRUPTED_PATTERN = /interrupt|cancel/i
 const INTERRUPT_PATTERN = /interrupt/i
 const OFFLINE_TOTALS_PATTERN =

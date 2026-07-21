@@ -1,10 +1,16 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { listRunSummaries, readRunStatus } from "../src/run-inspection.js"
+import { workflowRunDirectory } from "../src/workflow-storage.js"
 
 const directories: string[] = []
+const originalCodexHome = process.env.CODEX_HOME
+
+beforeEach(async () => {
+  process.env.CODEX_HOME = join(await makeTemporaryDirectory(), "codex-home")
+})
 
 afterEach(async () => {
   await Promise.all(
@@ -12,6 +18,11 @@ afterEach(async () => {
       .splice(0)
       .map((directory) => rm(directory, { force: true, recursive: true }))
   )
+  if (originalCodexHome === undefined) {
+    delete process.env.CODEX_HOME
+  } else {
+    process.env.CODEX_HOME = originalCodexHome
+  }
 })
 
 describe("run inspection", () => {
@@ -256,11 +267,52 @@ describe("run inspection", () => {
       status: "unknown"
     })
     await expect(readRunStatus(cwd, "missing")).resolves.toBeNull()
+    await expect(readRunStatus(cwd, "..")).resolves.toBeNull()
   })
 
-  test("returns an empty list when the runs directory does not exist", async () => {
+  test("ignores legacy repository-local runs", async () => {
     const cwd = await makeTemporaryDirectory()
+    const legacyDirectory = join(
+      cwd,
+      ".codex",
+      "workflows",
+      "runs",
+      "legacy-run"
+    )
+    await mkdir(legacyDirectory, { recursive: true })
+    await writeFile(join(legacyDirectory, "journal.jsonl"), "")
     await expect(listRunSummaries(cwd)).resolves.toEqual([])
+    await expect(readRunStatus(cwd, "legacy-run")).resolves.toBeNull()
+  })
+
+  test("aggregates workflow directories and rejects duplicate run IDs", async () => {
+    const cwd = await makeTemporaryDirectory()
+    await writeEvents(
+      cwd,
+      "alpha-run",
+      [startedRecord("alpha-run", 10)],
+      "",
+      "alpha"
+    )
+    await writeEvents(
+      cwd,
+      "beta-run",
+      [startedRecord("beta-run", 20)],
+      "",
+      "beta"
+    )
+    await writeJournal(cwd, "duplicate", [], "alpha")
+    await writeJournal(cwd, "duplicate", [], "beta")
+
+    await expect(listRunSummaries(cwd)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ runId: "alpha-run" }),
+        expect.objectContaining({ runId: "beta-run" })
+      ])
+    )
+    await expect(readRunStatus(cwd, "duplicate")).rejects.toThrow(
+      "run ID is ambiguous: duplicate"
+    )
   })
 })
 
@@ -274,9 +326,10 @@ async function writeEvents(
   cwd: string,
   runId: string,
   records: Record<string, unknown>[],
-  trailing = ""
+  trailing = "",
+  workflowName = "test-workflow"
 ): Promise<void> {
-  const directory = runDirectory(cwd, runId)
+  const directory = runDirectory(cwd, runId, workflowName)
   await mkdir(directory, { recursive: true })
   await writeFile(
     join(directory, "events.jsonl"),
@@ -287,9 +340,10 @@ async function writeEvents(
 async function writeJournal(
   cwd: string,
   runId: string,
-  records: Record<string, unknown>[]
+  records: Record<string, unknown>[],
+  workflowName = "test-workflow"
 ): Promise<void> {
-  const directory = runDirectory(cwd, runId)
+  const directory = runDirectory(cwd, runId, workflowName)
   await mkdir(directory, { recursive: true })
   await writeFile(
     join(directory, "journal.jsonl"),
@@ -297,8 +351,12 @@ async function writeJournal(
   )
 }
 
-function runDirectory(cwd: string, runId: string): string {
-  return join(cwd, ".codex", "workflows", "runs", runId)
+function runDirectory(
+  cwd: string,
+  runId: string,
+  workflowName = "test-workflow"
+): string {
+  return workflowRunDirectory(cwd, workflowName, runId)
 }
 
 function startedRecord(runId: string, ts: number): Record<string, unknown> {

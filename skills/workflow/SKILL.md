@@ -102,7 +102,9 @@ bunx gpt-workflow@latest run --default-model <the model you are running as> \
 Pass workflow input as strict JSON with `--args '{"key":"value"}'`; quote bare
 strings (`--args '"triage"'`). Invalid JSON exits 1 before any record is
 emitted. Piping to `tee` is optional: every run persists a filtered event
-stream to `.codex/workflows/runs/<runId>/events.jsonl` automatically.
+stream under
+`$CODEX_HOME/projects/<project>/workflows/<name>/runs/<runId>/events.jsonl`
+automatically.
 
 Read the terminal NDJSON record and its `journalPath`. Inspect runs without
 spending model tokens:
@@ -123,7 +125,8 @@ bunx gpt-workflow@latest run --default-model <the model you are running as> \
 ```
 
 Pass the same `--args` on resume; changed args change prompts and miss replay
-keys. For replay debugging, stream journals line by line with
+keys. Resume rejects missing or ambiguous IDs and workflow-name mismatches
+before connecting to Codex. For replay debugging, stream journals line by line with
 `parseWorkflowJournalEntry`; never require a whole-file read. Treat unmatched
 `started` records as interrupted or failed live calls. Journal v3 matches a
 prompt-and-authored-options key multiset until the first miss; after that

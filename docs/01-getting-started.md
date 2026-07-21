@@ -41,6 +41,9 @@ const summaries = await parallel(
 return { summaries: summaries.filter(Boolean) }
 ```
 
+`meta.name` becomes a storage directory name. It may contain only letters,
+numbers, periods, underscores, and hyphens, and cannot be `.` or `..`.
+
 Workflow source is trusted repository code executed in a `node:vm` semantic
 boundary. It is not a security sandbox for hostile JavaScript.
 
@@ -84,7 +87,7 @@ The terminal `run.completed` record contains `result`, `usage`, `failures`, and
 `journalPath`. The journal lives at:
 
 ```text
-.codex/workflows/runs/<runId>/journal.jsonl
+$CODEX_HOME/projects/<encoded-project-path>/workflows/<workflow-name>/runs/<runId>/journal.jsonl
 ```
 
 The same directory collects `events.jsonl`, a filtered copy of the stream
@@ -92,8 +95,9 @@ that the two commands below read back — no need to `tee` the run yourself.
 
 ## List past runs
 
-`list` scans `.codex/workflows/runs/` and prints one JSON line per run,
-newest first. It reads only local files and spends no model tokens:
+`list` scans every workflow under the current project's `CODEX_HOME` storage
+and prints one JSON line per run, newest first. It reads only local files and
+spends no model tokens:
 
 ```sh
 gpt-workflow list
@@ -122,8 +126,9 @@ A run with no terminal record is `"incomplete"` — an in-flight and an
 interrupted run look identical on disk, so the CLI never claims "running";
 check `lastEventAt` for staleness. Per-agent `status` comes from each agent's
 own terminal event, so an interrupted run still shows which agents completed
-or failed. An unknown run ID exits 1 with `run not found` on stderr. Runs
-recorded before `events.jsonl` existed report
+or failed. An unknown run ID exits 1 with `run not found` on stderr. A run ID
+present under more than one workflow is rejected as ambiguous. Runs recorded
+before `events.jsonl` existed report
 `{"status":"unknown","journalOnly":true,...}` with journal record counts.
 
 ## Resume a run
@@ -140,7 +145,9 @@ Resume reads the same journal and matches completed `agent()` calls from a key
 multiset. Matching is order-independent until the first miss; that call and all
 later calls run live and append new records to the same journal. Keep `--args`
 identical to replay: changed args change prompts, which miss their journal
-keys and run live.
+keys and run live. Resume rejects a missing run ID or a run whose stored
+workflow name differs from the current script's `meta.name` before connecting
+to Codex.
 
 ## Parse large journals
 

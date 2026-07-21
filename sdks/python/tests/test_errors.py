@@ -70,7 +70,7 @@ def test_invalid_workflow_error_always_carries_persisted_run_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     run_id = "workflow-invalid"
-    run_directory = tmp_path / ".codex" / "workflows" / "runs" / run_id
+    run_directory = tmp_path / "test-runs" / run_id
     script = tmp_path / "workflow.js"
     script.write_text("return (\n")
     gpt_workflow.cwd = tmp_path
@@ -266,7 +266,7 @@ def _install_failed_run_cli(
     body = (
         "import json, pathlib, sys\n"
         f"run_id = {run_id!r}\n"
-        "runs = pathlib.Path.cwd() / '.codex' / 'workflows' / 'runs'\n"
+        "runs = pathlib.Path.cwd() / 'test-runs'\n"
         "run_directory = runs / run_id\n"
         "if sys.argv[3] == 'run':\n"
         "    print(json.dumps({'type': 'run.started', 'runId': run_id, "
@@ -295,7 +295,7 @@ def _install_interruptible_cli(
     body = (
         "import json, pathlib, signal, sys, time\n"
         "run_id = 'workflow-interrupted'\n"
-        "runs = pathlib.Path.cwd() / '.codex' / 'workflows' / 'runs'\n"
+        "runs = pathlib.Path.cwd() / 'test-runs'\n"
         "run_directory = runs / run_id\n"
         "if sys.argv[3] == 'status':\n"
         "    print(json.dumps({'runId': run_id, 'name': 'interrupted', "

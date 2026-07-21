@@ -18,6 +18,11 @@ import {
   type WorkflowExecution,
   type WorkflowExecutionOptions
 } from "./runtime.js"
+import {
+  findStoredWorkflowRuns,
+  isSafePathSegment,
+  workflowRunDirectory
+} from "./workflow-storage.js"
 
 const USAGE = `Usage:
   gpt-workflow run [options] <script.js>
@@ -193,7 +198,8 @@ export function runCLI(
       !runId ||
       extra.length > 0 ||
       hasRunOptions(parsed.values) ||
-      !RUN_ID_PATTERN.test(runId)
+      !RUN_ID_PATTERN.test(runId) ||
+      !isSafePathSegment(runId)
     ) {
       return Promise.resolve(
         usageError(
@@ -273,7 +279,9 @@ async function runWorkflowCommand(
   const resumeValue = values.resume
   if (
     resumeValue !== undefined &&
-    (typeof resumeValue !== "string" || !RUN_ID_PATTERN.test(resumeValue))
+    (typeof resumeValue !== "string" ||
+      !RUN_ID_PATTERN.test(resumeValue) ||
+      !isSafePathSegment(resumeValue))
   ) {
     return usageError(
       dependencies,
@@ -299,16 +307,34 @@ async function runWorkflowCommand(
   if (typeof clientOptions === "string") {
     return usageError(dependencies, clientOptions)
   }
-  const runId = resumeFromRunId ?? dependencies.makeRunId()
   const invocationDirectory = dependencies.cwd()
   const scriptPath = resolve(invocationDirectory, scriptArgument)
-  const runDirectory = join(
-    invocationDirectory,
-    ".codex",
-    "workflows",
-    "runs",
-    runId
-  )
+
+  let source: string
+  let loaded: LoadedWorkflowScript
+  try {
+    source = await dependencies.readSource(scriptPath)
+    loaded = dependencies.parseWorkflow(source, scriptPath)
+  } catch (error) {
+    const failure = failureRecord(error)
+    dependencies.writeError(`gpt-workflow: ${failure.message}\n`)
+    return 1
+  }
+
+  let location: { runDirectory: string; runId: string }
+  try {
+    location = await resolveCLIRunLocation(
+      invocationDirectory,
+      loaded.meta.name,
+      resumeFromRunId,
+      dependencies
+    )
+  } catch (error) {
+    dependencies.writeError(`gpt-workflow: ${describe(error)}\n`)
+    return 1
+  }
+  const { runDirectory, runId } = location
+
   const eventsPath = join(runDirectory, "events.jsonl")
   let writeTail = Promise.resolve()
   let sequence = 0
@@ -350,18 +376,6 @@ async function runWorkflowCommand(
       `gpt-workflow: could not create run directory: ${describe(error)}\n`
     )
     return 1
-  }
-
-  let source: string
-  let loaded: LoadedWorkflowScript
-  try {
-    source = await dependencies.readSource(scriptPath)
-    loaded = dependencies.parseWorkflow(source, scriptPath)
-  } catch (error) {
-    const failure = failureRecord(error)
-    emit({ error: failure, type: "run.failed" })
-    dependencies.writeError(`gpt-workflow: ${failure.message}\n`)
-    return finish(1)
   }
 
   emit({
@@ -434,6 +448,38 @@ async function runWorkflowCommand(
     dependencies.writeError(`gpt-workflow: ${failure.message}\n`)
     return finish(1)
   }
+}
+
+async function resolveCLIRunLocation(
+  projectDirectory: string,
+  workflowName: string,
+  resumeFromRunId: string | undefined,
+  dependencies: CLIDependencies
+): Promise<{ runDirectory: string; runId: string }> {
+  if (resumeFromRunId === undefined) {
+    const runId = dependencies.makeRunId()
+    return {
+      runDirectory: workflowRunDirectory(projectDirectory, workflowName, runId),
+      runId
+    }
+  }
+  const matches = await findStoredWorkflowRuns(
+    projectDirectory,
+    resumeFromRunId
+  )
+  if (matches.length === 0) {
+    throw new Error(`run not found: ${resumeFromRunId}`)
+  }
+  if (matches.length > 1) {
+    throw new Error(`run ID is ambiguous: ${resumeFromRunId}`)
+  }
+  const [match] = matches
+  if (match?.workflowName !== workflowName) {
+    throw new Error(
+      `run ${resumeFromRunId} belongs to workflow ${match?.workflowName}, not ${workflowName}`
+    )
+  }
+  return { runDirectory: match.directory, runId: resumeFromRunId }
 }
 
 function hasRunOptions(

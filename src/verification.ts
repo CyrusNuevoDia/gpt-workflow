@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto"
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises"
 import { join, relative, resolve } from "node:path"
+import { workflowRunDirectory } from "./workflow-storage.js"
 
 export type VerificationStatus =
   | "passed"
@@ -809,11 +810,9 @@ export class VerificationArtifactWriter {
 
   constructor(verifierRunId: string, repository = process.cwd()) {
     this.verifierRunId = verifierRunId
-    this.directory = resolve(
+    this.directory = workflowRunDirectory(
       repository,
-      ".codex",
-      "workflows",
-      "runs",
+      "verification",
       verifierRunId
     )
     this.reportPath = join(this.directory, "report.json")
@@ -939,11 +938,9 @@ export async function validateBrowserProof(
       }
     }
     const reportPath = resolve(proof.reportPath)
-    const verificationRunRoot = resolve(
+    const verificationRunRoot = workflowRunDirectory(
       repository,
-      ".codex",
-      "workflows",
-      "runs",
+      "verification",
       proof.verifierRunId
     )
     if (!reportPath.startsWith(`${verificationRunRoot}/`)) {

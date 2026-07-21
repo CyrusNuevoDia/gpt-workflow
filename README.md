@@ -69,6 +69,8 @@ return { summaries: summaries.filter(Boolean) }
 ```
 
 `args` is the run's input; the `--args` flag in the next section supplies it.
+`meta.name` is also the run-storage directory name, so it may contain only
+letters, numbers, periods, underscores, and hyphens, and cannot be `.` or `..`.
 
 If an agent's thread ends in an error, times out, returns no final message,
 or exhausts its structured-output retries, that call resolves to `null` and is
@@ -102,7 +104,8 @@ with a usage error on stderr before any record is emitted. For `--resume`,
 substitute the `runId` reported by your original run's records — real IDs
 look like `workflow-<uuid>`; these examples shorten it to `workflow-123`.
 Resume with the same `--args`: changed args change prompts, which miss the
-journal and run live.
+journal and run live. Resume is strict: a missing run ID, duplicate run ID, or
+run stored under a different workflow name exits before connecting to Codex.
 
 `models` prints every model discovered from the authenticated App Server as
 NDJSON without spending model tokens. Run accepts repeatable `--required-model`
@@ -117,19 +120,21 @@ carries the script's `meta`; the final `run.completed` record carries `meta`,
 `result`, `usage`, `failures`, and `journalPath`:
 
 ```json
-{"meta":{"name":"summarize-files","description":"Summarize files concurrently and merge the findings"},"type":"run.started","runDirectory":"/repo/.codex/workflows/runs/workflow-123","runId":"workflow-123","schemaVersion":1,"scriptPath":"/repo/.codex/workflows/summarize-files.js","sequence":0,"ts":1783971328984}
-{"failures":[],"journalPath":"/repo/.codex/workflows/runs/workflow-123/journal.jsonl","meta":{"name":"summarize-files","description":"Summarize files concurrently and merge the findings"},"result":{"summaries":["…","…"]},"type":"run.completed","usage":{"agentCount":2,"liveAgentCount":2,"modelUsage":{"gpt-5.6-luna":{"liveAgentCount":2,"replayedAgentCount":0,"subagentTokens":3412}},"peakConcurrentAgents":2,"replayedAgentCount":0,"subagentTokens":3412},"runDirectory":"/repo/.codex/workflows/runs/workflow-123","runId":"workflow-123","schemaVersion":1,"scriptPath":"/repo/.codex/workflows/summarize-files.js","sequence":9,"ts":1783971339402}
+{"meta":{"name":"summarize-files","description":"Summarize files concurrently and merge the findings"},"type":"run.started","runDirectory":"/home/me/.codex/projects/-repo/workflows/summarize-files/runs/workflow-123","runId":"workflow-123","schemaVersion":1,"scriptPath":"/repo/.codex/workflows/summarize-files.js","sequence":0,"ts":1783971328984}
+{"failures":[],"journalPath":"/home/me/.codex/projects/-repo/workflows/summarize-files/runs/workflow-123/journal.jsonl","meta":{"name":"summarize-files","description":"Summarize files concurrently and merge the findings"},"result":{"summaries":["…","…"]},"type":"run.completed","usage":{"agentCount":2,"liveAgentCount":2,"modelUsage":{"gpt-5.6-luna":{"liveAgentCount":2,"replayedAgentCount":0,"subagentTokens":3412}},"peakConcurrentAgents":2,"replayedAgentCount":0,"subagentTokens":3412},"runDirectory":"/home/me/.codex/projects/-repo/workflows/summarize-files/runs/workflow-123","runId":"workflow-123","schemaVersion":1,"scriptPath":"/repo/.codex/workflows/summarize-files.js","sequence":9,"ts":1783971339402}
 ```
 
-If the run fails, the CLI emits a `run.failed` record with the error and
-exits non-zero. Agent-side `null` failures don't fail the run: they stay
+After valid metadata creates the run directory, a top-level failure makes the
+CLI emit `run.failed` and exit non-zero. Source-read and metadata-parse failures
+write only to stderr and create no run artifact. Agent-side `null` failures don't fail the run: they stay
 visible in the `run.completed` record's `failures` and are retried on resume.
 
 ## Inspect past runs
 
 There is no need to `tee` the stream for later inspection: every run also
 persists a filtered copy of its NDJSON to
-`.codex/workflows/runs/<runId>/events.jsonl` — the run, phase, and agent
+`$CODEX_HOME/projects/<encoded-project-path>/workflows/<workflow-name>/runs/<runId>/events.jsonl`
+— the run, phase, and agent
 status records needed to rebuild run state, without the high-volume
 streaming deltas. Two commands read it back without spending model tokens:
 
@@ -158,8 +163,13 @@ with an error on stderr.
 Live runs persist an append-only replay journal at:
 
 ```text
-.codex/workflows/runs/<runId>/journal.jsonl
+$CODEX_HOME/projects/<encoded-project-path>/workflows/<workflow-name>/runs/<runId>/journal.jsonl
 ```
+
+`CODEX_HOME` defaults to `~/.codex`. The project key is the absolute invocation
+directory with path separators replaced by dashes, including the leading root
+separator: `/repo` becomes `-repo`. Run state is local user data and does not
+need a repository ignore rule.
 
 The same directory holds `events.jsonl`, the inspection copy described
 above; the journal remains the only replay substrate.

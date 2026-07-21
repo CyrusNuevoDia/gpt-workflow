@@ -45,9 +45,10 @@ The result includes `result`, `failures`, `usage`, `events`, `agentEvents`,
 
 ## Run inspection
 
-`listRunSummaries(cwd)` scans `<cwd>/.codex/workflows/runs/` and resolves to
-`RunSummary[]`, newest first by start time, reading only the first and last
-record of each run's `events.jsonl` so cost stays flat as runs grow. Each
+`listRunSummaries(cwd)` scans every workflow in the encoded project's
+`CODEX_HOME` storage and resolves to `RunSummary[]`, newest first by start time,
+reading only the first and last record of each run's `events.jsonl` so cost
+stays flat as runs grow. Each
 `RunSummary` holds `runId`, `name` (`null` when unknown), `scriptPath`,
 `status` (`"completed"`, `"failed"`, `"incomplete"`, or `"unknown"`),
 `startedAt`, and `lastEventAt` (epoch milliseconds), plus `finishedAt`,
@@ -71,6 +72,9 @@ sum. A journal-only run resolves to `JournalRunStatus`
 (`{runId, status: "unknown", journalOnly: true, journal: {started, results,
 unmatched}}`); an unknown or malformed `runId` resolves to `null`.
 `RunInspectionStatus` is the union of both shapes.
+
+If the same run ID exists under multiple workflow names, `readRunStatus`
+rejects with an ambiguity error rather than choosing one.
 
 Neither function spends model tokens; both read only local run files.
 

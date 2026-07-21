@@ -5,13 +5,15 @@
 Live CLI and library runs default to:
 
 ```text
-<process cwd>/.codex/workflows/runs/<runId>/
+$CODEX_HOME/projects/<encoded-project-path>/workflows/<workflow-name>/runs/<runId>/
 ```
 
 The CLI calls this directory `runDirectory` in every NDJSON record. The library
 returns the exact `journalPath`. `runDirectory` can override the library path;
-the CLI intentionally uses the invocation directory so a repository owns its
-run history.
+the CLI uses its absolute invocation directory as the project identity, and the
+library uses `options.cwd ?? process.cwd()`. `CODEX_HOME` defaults to
+`~/.codex`. The project key replaces absolute-path separators with dashes, so
+`/Users/me/project` becomes `-Users-me-project`.
 
 The directory holds two files with different jobs:
 
@@ -29,8 +31,8 @@ The directory holds two files with different jobs:
   not write this file; library callers observe the same events through
   `onAgentEvent` and `onWorkflowEvent`.
 
-Add `.codex/workflows/runs/` to version-control ignores. Both files contain
-model outputs and may contain repository-sensitive information.
+Both files contain model outputs and may contain repository-sensitive
+information. They live outside the repository by default.
 
 ## Journal wire format
 
@@ -68,6 +70,12 @@ CLI resume reuses the prior run ID and run directory:
 gpt-workflow run --default-model <name> --turn-timeout-ms <ms> --resume <runId> <script.js>
 ```
 
+Resume rejects missing and ambiguous run IDs. It also rejects a run stored
+under a different workflow name than the current script's `meta.name`, so a
+renamed or incorrect workflow cannot silently replay another journal. These
+checks happen before the App Server connection. A custom `runDirectory` passed
+to the library remains caller-owned, but it must already exist for resume.
+
 Library resume uses `resumeFromRunId`; pass the same `runDirectory` only if the
 original run used a custom location.
 
@@ -92,10 +100,11 @@ become `null` plus a `WorkflowFailure` with `kind: "agent"`; `parallel` and
 `pipeline` likewise convert their own slot failures to `null`. Cancellation
 always rejects the run, including while calls are active inside `parallel` or
 `pipeline`. Top-level load and boundary errors, worktree setup failures, and
-direct runtime errors also reject. Error names survive the VM boundary, so
+direct runtime errors also reject. Source-read and metadata-parse failures
+happen before managed storage exists, so the CLI reports them only on stderr;
+later CLI failures emit `run.failed`. Error names survive the VM boundary, so
 callers can distinguish names such as `WorkflowCapError` and
-`WorkflowCanceledError`. CLI failures emit `run.failed`, write a concise stderr
-diagnostic, and exit nonzero.
+`WorkflowCanceledError`. All failures exit nonzero.
 
 The CLI maps `SIGINT` and `SIGTERM` to runtime cancellation. Queued calls reject,
 active App Server turns are interrupted, the terminal `run.failed` record is

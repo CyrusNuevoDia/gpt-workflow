@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { REQUIRED_APP_SERVER_MODELS } from "../src/app-server.js"
@@ -8,6 +8,7 @@ import type {
   WorkflowExecution,
   WorkflowExecutionOptions
 } from "../src/runtime.js"
+import { workflowRunDirectory } from "../src/workflow-storage.js"
 
 const WORKFLOW_SOURCE = `export const meta = {
   name: "source-workflow",
@@ -16,6 +17,7 @@ const WORKFLOW_SOURCE = `export const meta = {
 return { ok: true }
 `
 const directories: string[] = []
+const originalCodexHome = process.env.CODEX_HOME
 
 type RecordLine = {
   [key: string]: unknown
@@ -26,12 +28,21 @@ type RecordLine = {
   type: string
 }
 
+beforeEach(async () => {
+  process.env.CODEX_HOME = join(await makeTemporaryDirectory(), "codex-home")
+})
+
 afterEach(async () => {
   await Promise.all(
     directories
       .splice(0)
       .map((directory) => rm(directory, { force: true, recursive: true }))
   )
+  if (originalCodexHome === undefined) {
+    delete process.env.CODEX_HOME
+  } else {
+    process.env.CODEX_HOME = originalCodexHome
+  }
 })
 
 describe("run", () => {
@@ -297,6 +308,7 @@ describe("run", () => {
     expect(
       await runCLI(["run", "--args", '"text"', "workflow.js"], dependencies)
     ).toBe(0)
+    await mkdir(runDirectory(cwd, "existing-run"), { recursive: true })
     expect(
       await runCLI(
         [
@@ -321,7 +333,60 @@ describe("run", () => {
     expect(received[2]?.workflowRunId).toBeUndefined()
   })
 
-  test("persists a parse failure before the runtime opens its journal", async () => {
+  test("rejects missing, renamed, and ambiguous resume targets before running", async () => {
+    const cwd = await makeTemporaryDirectory()
+    const errors: string[] = []
+    let runs = 0
+    const dependencies = {
+      connect: () => Promise.reject(new Error("must not connect")),
+      cwd: () => cwd,
+      readSource: () => Promise.resolve(WORKFLOW_SOURCE),
+      runWorkflow: () => {
+        runs += 1
+        return Promise.reject(new Error("must not run"))
+      },
+      writeError: (text: string) => errors.push(text),
+      writeOutput: () => undefined
+    }
+
+    expect(
+      await runCLI(
+        ["run", "--resume", "missing-run", "workflow.js"],
+        dependencies
+      )
+    ).toBe(1)
+    expect(errors.pop()).toBe("gpt-workflow: run not found: missing-run\n")
+
+    await mkdir(workflowRunDirectory(cwd, "renamed-workflow", "renamed-run"), {
+      recursive: true
+    })
+    expect(
+      await runCLI(
+        ["run", "--resume", "renamed-run", "workflow.js"],
+        dependencies
+      )
+    ).toBe(1)
+    expect(errors.pop()).toBe(
+      "gpt-workflow: run renamed-run belongs to workflow renamed-workflow, not source-workflow\n"
+    )
+
+    await mkdir(runDirectory(cwd, "duplicate-run"), { recursive: true })
+    await mkdir(workflowRunDirectory(cwd, "other-workflow", "duplicate-run"), {
+      recursive: true
+    })
+    expect(
+      await runCLI(
+        ["run", "--resume", "duplicate-run", "workflow.js"],
+        dependencies
+      )
+    ).toBe(1)
+    expect(errors.pop()).toBe(
+      "gpt-workflow: run ID is ambiguous: duplicate-run\n"
+    )
+    expect(runs).toBe(0)
+  })
+
+  test("does not persist a failure without valid workflow metadata", async () => {
     const cwd = await makeTemporaryDirectory()
     const output: string[] = []
     const errors: string[] = []
@@ -335,14 +400,10 @@ describe("run", () => {
     })
 
     expect(exitCode).toBe(1)
-    expect(parseOutput(output).map(({ type }) => type)).toEqual(["run.failed"])
+    expect(output).toEqual([])
     expect(errors.join("")).toContain("broken.js: expected export")
     const eventsPath = join(runDirectory(cwd, "parse-failed"), "events.jsonl")
-    expect((await stat(eventsPath)).isFile()).toBe(true)
-    expect(output).toHaveLength(1)
-    expect((await readFile(eventsPath, "utf8")).trim()).toBe(
-      (output[0] ?? "").trim()
-    )
+    await expect(stat(eventsPath)).rejects.toMatchObject({ code: "ENOENT" })
   })
 
   test("emits and persists a terminal runtime failure", async () => {
@@ -532,6 +593,16 @@ describe("usage validation", () => {
     expect(invalidOutput).toEqual([])
     expect(errors.join("")).toContain("--resume must contain only")
     expect(errors.join("")).toContain("Usage:")
+
+    expect(
+      await runCLI(["status", ".."], {
+        writeError: (text) => errors.push(text),
+        writeOutput: (text) => invalidOutput.push(text)
+      })
+    ).toBe(1)
+    expect(errors.join("")).toContain(
+      "expected exactly: gpt-workflow status <runId>"
+    )
   })
 
   test.each([
@@ -715,5 +786,5 @@ async function makeTemporaryDirectory(): Promise<string> {
 }
 
 function runDirectory(cwd: string, runId: string): string {
-  return join(cwd, ".codex", "workflows", "runs", runId)
+  return workflowRunDirectory(cwd, "source-workflow", runId)
 }

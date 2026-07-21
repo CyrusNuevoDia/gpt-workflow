@@ -70,6 +70,11 @@ is recorded.
   error: the CLI writes `--args must be valid JSON: ...` to stderr and exits
   1 without emitting any NDJSON record, so there is no `run.started` and
   nothing to resume. Pass a plain string as quoted JSON: `--args '"triage"'`.
+- Source-read and metadata-parse failures also exit 1 with only a stderr
+  diagnostic. Without a valid `meta.name`, the CLI creates no run directory or
+  NDJSON record.
+- `--resume` rejects missing or ambiguous run IDs and workflow-name mismatches
+  before connecting to Codex or spending tokens.
 - `gpt-workflow status <runId>` with an unknown run ID writes
   `run not found: <runId>` to stderr and exits 1. A malformed run ID is a
   usage error with the same exit code.

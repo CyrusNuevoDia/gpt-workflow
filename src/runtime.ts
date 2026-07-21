@@ -24,6 +24,12 @@ import {
   WorkflowRunState,
   type WorkflowUsage
 } from "./workflow-state.js"
+import {
+  findStoredWorkflowRuns,
+  isDirectory,
+  isSafePathSegment,
+  workflowRunDirectory
+} from "./workflow-storage.js"
 import { createWorkflowWorktree, type WorkflowWorktree } from "./worktree.js"
 
 export type JSONPrimitive = string | number | boolean | null
@@ -431,6 +437,11 @@ class LiteralMetaParser {
     }
     if (typeof value.name !== "string" || value.name.length === 0) {
       this.fail("meta.name is required and must be a non-empty string")
+    }
+    if (!isSafePathSegment(value.name)) {
+      this.fail(
+        "meta.name must contain only letters, numbers, periods, underscores, and hyphens, and must not be . or .."
+      )
     }
     if (
       typeof value.description !== "string" ||
@@ -887,11 +898,13 @@ export async function runWorkflowScript(
     spentSource: options.budget?.spent ?? 0,
     workflowRunId
   })
-  const runDirectory =
-    options.runDirectory ??
-    (options.appServer !== undefined || options.resumeFromRunId !== undefined
-      ? resolve(process.cwd(), ".codex", "workflows", "runs", workflowRunId)
-      : null)
+  const projectDirectory = options.cwd ?? process.cwd()
+  const runDirectory = await resolveRunDirectory(
+    loaded.meta.name,
+    workflowRunId,
+    projectDirectory,
+    options
+  )
   const journal =
     runDirectory === null ? null : await WorkflowJournal.open(runDirectory)
   const agentEvents: AppServerNormalizedEvent[] = []
@@ -923,6 +936,49 @@ export async function runWorkflowScript(
     usage: state.usage,
     workflowRunId
   }
+}
+
+async function resolveRunDirectory(
+  workflowName: string,
+  workflowRunId: string,
+  projectDirectory: string,
+  options: WorkflowExecutionOptions
+): Promise<string | null> {
+  if (options.runDirectory !== undefined) {
+    if (
+      options.resumeFromRunId !== undefined &&
+      !(await isDirectory(options.runDirectory))
+    ) {
+      throw new Error(`run not found: ${options.resumeFromRunId}`)
+    }
+    return options.runDirectory
+  }
+  if (
+    options.appServer === undefined &&
+    options.resumeFromRunId === undefined
+  ) {
+    return null
+  }
+  if (options.resumeFromRunId === undefined) {
+    return workflowRunDirectory(projectDirectory, workflowName, workflowRunId)
+  }
+  const matches = await findStoredWorkflowRuns(
+    projectDirectory,
+    options.resumeFromRunId
+  )
+  if (matches.length === 0) {
+    throw new Error(`run not found: ${options.resumeFromRunId}`)
+  }
+  if (matches.length > 1) {
+    throw new Error(`run ID is ambiguous: ${options.resumeFromRunId}`)
+  }
+  const [match] = matches
+  if (match?.workflowName !== workflowName) {
+    throw new Error(
+      `run ${options.resumeFromRunId} belongs to workflow ${match?.workflowName}, not ${workflowName}`
+    )
+  }
+  return match.directory
 }
 
 async function executeWorkflow(

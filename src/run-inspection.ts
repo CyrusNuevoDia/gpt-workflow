@@ -1,8 +1,12 @@
-import type { Dirent } from "node:fs"
-import { open, readdir, readFile, stat } from "node:fs/promises"
+import { open, readFile } from "node:fs/promises"
 import { join } from "node:path"
 import type { AppServerJSONValue } from "./app-server.js"
 import { parseWorkflowJournalEntry } from "./workflow-journal.js"
+import {
+  findStoredWorkflowRuns,
+  isSafePathSegment,
+  listStoredWorkflowRuns
+} from "./workflow-storage.js"
 
 const RUN_ID_PATTERN = /^[A-Za-z0-9._-]+$/
 const READ_CHUNK_SIZE = 4096
@@ -80,23 +84,9 @@ type MutableAgent = RunAgent & {
 }
 
 export async function listRunSummaries(cwd: string): Promise<RunSummary[]> {
-  const runsDirectory = join(cwd, ".codex", "workflows", "runs")
-  let entries: Dirent<string>[]
-  try {
-    entries = await readdir(runsDirectory, { withFileTypes: true })
-  } catch (error) {
-    if (isMissingFile(error)) {
-      return []
-    }
-    throw error
-  }
-
+  const runs = await listStoredWorkflowRuns(cwd)
   const summaries = await Promise.all(
-    entries
-      .filter((entry) => entry.isDirectory())
-      .map((entry) =>
-        readRunSummary(join(runsDirectory, entry.name), entry.name)
-      )
+    runs.map(({ directory, runId }) => readRunSummary(directory, runId))
   )
   return summaries.sort((left, right) => {
     if (left.startedAt === null) {
@@ -117,11 +107,18 @@ export async function readRunStatus(
   cwd: string,
   runId: string
 ): Promise<RunInspectionStatus | null> {
-  if (!RUN_ID_PATTERN.test(runId)) {
+  if (!(RUN_ID_PATTERN.test(runId) && isSafePathSegment(runId))) {
     return null
   }
-  const runDirectory = join(cwd, ".codex", "workflows", "runs", runId)
-  if (!(await isDirectory(runDirectory))) {
+  const matches = await findStoredWorkflowRuns(cwd, runId)
+  if (matches.length === 0) {
+    return null
+  }
+  if (matches.length > 1) {
+    throw new Error(`run ID is ambiguous: ${runId}`)
+  }
+  const runDirectory = matches[0]?.directory
+  if (runDirectory === undefined) {
     return null
   }
 
@@ -550,17 +547,6 @@ function tokenNumber(
   return typeof value === "number" && Number.isFinite(value) && value >= 0
     ? value
     : 0
-}
-
-async function isDirectory(path: string): Promise<boolean> {
-  try {
-    return (await stat(path)).isDirectory()
-  } catch (error) {
-    if (isMissingFile(error)) {
-      return false
-    }
-    throw error
-  }
 }
 
 function isMissingFile(error: unknown): boolean {

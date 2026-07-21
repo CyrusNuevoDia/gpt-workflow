@@ -43,6 +43,8 @@
     "dist/src/workflow-journal.js",
     "dist/src/workflow-state.d.ts",
     "dist/src/workflow-state.js",
+    "dist/src/workflow-storage.d.ts",
+    "dist/src/workflow-storage.js",
     "dist/src/worktree.d.ts",
     "dist/src/worktree.js"
   ],

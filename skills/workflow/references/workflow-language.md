@@ -22,8 +22,10 @@ const reviews = await parallel(
 return { reviews: reviews.filter(Boolean) }
 ```
 
-`meta.name` and `meta.description` are required. `whenToUse` and literal phase
-objects are optional. Metadata cannot execute code.
+`meta.name` and `meta.description` are required. `meta.name` may contain only
+letters, numbers, periods, underscores, and hyphens, and cannot be `.` or `..`.
+`whenToUse` and literal phase objects are optional. Metadata cannot execute
+code.
 
 Per-call `model` is optional when the CLI or App Server client supplies a
 default. An explicit `model` remains a per-call override.

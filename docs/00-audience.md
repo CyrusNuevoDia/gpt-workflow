@@ -58,11 +58,13 @@ Readers:
 ## Rules for writing these docs
 
 - "Journal" always means the replay journal at
-  `.codex/workflows/runs/<runId>/journal.jsonl`. Codex thread rollouts are
+  `$CODEX_HOME/projects/<project>/workflows/<workflow>/runs/<runId>/journal.jsonl`.
+  Codex thread rollouts are
   never called journals, and their private on-disk layout is never
   documented as a contract.
 - "Events file" always means the CLI-written inspection copy at
-  `.codex/workflows/runs/<runId>/events.jsonl`. It is never called a journal
+  `$CODEX_HOME/projects/<project>/workflows/<workflow>/runs/<runId>/events.jsonl`.
+  It is never called a journal
   and never described as a replay input.
 - Examples must be copy-runnable after substituting only model names and
   file paths.

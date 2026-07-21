@@ -68,6 +68,16 @@ test("rejects computed, continued, malformed, missing, and non-first meta withou
   expect(bodyCalls).toBe(0)
 })
 
+test("requires workflow names that are safe path segments", () => {
+  for (const name of ["../escape", "nested/name", ".", ".."]) {
+    expect(() =>
+      parseWorkflowScript(
+        `export const meta = { name: ${JSON.stringify(name)}, description: 'unsafe' }\nreturn null`
+      )
+    ).toThrow("meta.name must contain only")
+  }
+})
+
 test("supports top-level await and top-level return in strict JavaScript", async () => {
   const execution = await runWorkflowScript(
     script(`

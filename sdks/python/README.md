@@ -55,6 +55,10 @@ sends explicit JSON `null`. `WorkflowResult` contains the JSON result, detailed
 summaries; `status()` loads detailed phase, agent, token, failure, and fallback
 journal state; `models()` returns unique canonical model names in CLI order.
 Unknown compatible JSON fields are retained in each value's `extra` mapping.
+The CLI stores runs beneath
+`$CODEX_HOME/projects/<encoded-cwd>/workflows/<workflow-name>/runs/`, using
+`gpt_workflow.cwd` as the project identity; `CODEX_HOME` defaults to
+`~/.codex`.
 
 This no-agent workflow is deterministic and spends no model tokens:
 

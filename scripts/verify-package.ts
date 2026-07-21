@@ -244,7 +244,11 @@ async function verify(): Promise<{ paths: string[]; tarball: string }> {
     const consumer = join(tempRoot, "consumer")
     await mkdir(packDirectory)
     await mkdir(consumer)
-    const env = { ...process.env, npm_config_cache: cache }
+    const env = {
+      ...process.env,
+      CODEX_HOME: join(tempRoot, "codex-home"),
+      npm_config_cache: cache
+    }
     const paths = await expectedPackedPaths()
 
     const dryRun = parsePackResult(

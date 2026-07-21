@@ -22,11 +22,13 @@ Stdout is ordered NDJSON and stderr is human diagnostics. Every event includes
 use the terminal `run.completed` record for `result`, `usage`, `failures`, and
 `journalPath`.
 
-Default storage is `.codex/workflows/runs/<runId>/` relative to process cwd:
+Default storage is
+`$CODEX_HOME/projects/<encoded-project>/workflows/<name>/runs/<runId>/`:
 `journal.jsonl` for replay, plus `events.jsonl`, an automatic filtered copy of
 the stream (run records, phase/log events, and lifecycle, terminal, usage,
 error, warning, and collaboration agent events; streaming deltas dropped).
-Piping to `tee` is optional.
+`CODEX_HOME` defaults to `~/.codex`; the project key is the absolute invocation
+directory with separators replaced by dashes. Piping to `tee` is optional.
 
 ## Inspect runs
 
@@ -46,7 +48,9 @@ latest cumulative `tokens`, and terminal `result` / `failures`.
 `"incomplete"` means no terminal record; in-flight and interrupted runs look
 identical, so check `lastEventAt` for staleness. Per-agent `status` comes from
 each agent's own terminal event. Unknown run ID: `run not found` on stderr,
-exit 1. Pre-events runs report `"unknown"` with `journalOnly: true`.
+exit 1. Duplicate IDs are ambiguous. Resume also rejects workflow-name
+mismatches before connecting to Codex. Pre-events runs report `"unknown"` with
+`journalOnly: true`.
 
 ## Journal records
 

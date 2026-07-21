@@ -9,8 +9,9 @@
   executing the body.
 - `parseWorkflowJournalEntry(line)` parses one strict `started` or `result`
   record and throws `SyntaxError` for invalid input.
-- `listRunSummaries(cwd)` scans `<cwd>/.codex/workflows/runs/` and returns
-  newest-first `RunSummary` values from each run's `events.jsonl` boundary
+- `listRunSummaries(cwd)` scans the encoded project's workflows under
+  `CODEX_HOME` and returns newest-first `RunSummary` values from each run's
+  `events.jsonl` boundary
   records: `runId`, `name`, `scriptPath`, `status`, `startedAt`,
   `lastEventAt`, plus `finishedAt`, `failureCount`, and `usage` after the run
   ended. A missing runs directory returns an empty array.

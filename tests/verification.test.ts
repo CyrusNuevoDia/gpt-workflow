@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test"
+import { afterEach, expect, test } from "bun:test"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
@@ -14,6 +14,17 @@ import {
   validateStreamingEvidence,
   validateSuiteResult
 } from "../src/verification.js"
+import { workflowRunDirectory } from "../src/workflow-storage.js"
+
+const originalCodexHome = process.env.CODEX_HOME
+
+afterEach(() => {
+  if (originalCodexHome === undefined) {
+    delete process.env.CODEX_HOME
+  } else {
+    process.env.CODEX_HOME = originalCodexHome
+  }
+})
 
 const WORKFLOWS = [
   "parity-01-core.js",
@@ -200,9 +211,10 @@ test("matrix validator catches pending, skipped, unvisited, and incomplete work"
 test("artifact events use an allowlist and redact credential-shaped text", async () => {
   const root = await mkdtemp(join(tmpdir(), "gpt-workflow-artifacts-"))
   try {
+    process.env.CODEX_HOME = join(root, "codex-home")
     const writer = new VerificationArtifactWriter("run", root)
     expect(writer.directory).toBe(
-      resolve(root, ".codex", "workflows", "runs", "run")
+      workflowRunDirectory(root, "verification", "run")
     )
     await writer.open()
     writer.appendEvent("workflow.agent.event", {
@@ -241,7 +253,8 @@ test("secret scanner recognizes major credential families", () => {
 test("browser-proof hash binds R15 to the exact report", async () => {
   const root = await mkdtemp(join(tmpdir(), "gpt-workflow-browser-proof-"))
   const runId = "phase6-proof"
-  const runDirectory = join(root, ".codex", "workflows", "runs", runId)
+  process.env.CODEX_HOME = join(root, "codex-home")
+  const runDirectory = workflowRunDirectory(root, "verification", runId)
   const reportPath = join(runDirectory, "report.json")
   const proofPath = join(root, "browser-proof.json")
   try {
