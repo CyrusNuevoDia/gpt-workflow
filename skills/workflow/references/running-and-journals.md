@@ -30,6 +30,35 @@ error, warning, and collaboration agent events; streaming deltas dropped).
 `CODEX_HOME` defaults to `~/.codex`; the project key is the absolute invocation
 directory with separators replaced by dashes. Piping to `tee` is optional.
 
+## Monitor an in-flight run
+
+Keep the original runner process visible. Its first `run.started` record gives
+you the `runId` and exact `runDirectory`; use those emitted values instead of
+manually encoding the project path.
+
+From another terminal, poll a compact progress snapshot:
+
+```sh
+bunx gpt-workflow@latest status <runId>
+```
+
+Or follow the persisted event sequence after `events.jsonl` exists:
+
+```sh
+tail -f "<runDirectory>/events.jsonl" | jq -c .
+```
+
+Both approaches spend no model tokens. Prefer `status` for phase, agent, and
+token summaries. Tail `events.jsonl` when ordering or individual lifecycle
+events matter; streaming message and reasoning deltas are intentionally absent.
+Do not tail `journal.jsonl` as a progress feed: it contains replay records, not
+the complete run lifecycle.
+
+While the runner process is alive, `"incomplete"` means the run is in flight.
+After that process exits without a terminal record, it means the run was
+interrupted; use `lastEventAt` when assessing stale runs. A monitored run is
+finished only when `status` reports `"completed"` or `"failed"`.
+
 ## Inspect runs
 
 ```sh
@@ -45,12 +74,12 @@ and `usage` after the run ended. `status` prints one JSON object adding
 ordered `phases` with agent counts and token totals, per-agent `status` and
 latest cumulative `tokens`, and terminal `result` / `failures`.
 
-`"incomplete"` means no terminal record; in-flight and interrupted runs look
-identical, so check `lastEventAt` for staleness. Per-agent `status` comes from
-each agent's own terminal event. Unknown run ID: `run not found` on stderr,
-exit 1. Duplicate IDs are ambiguous. Resume also rejects workflow-name
-mismatches before connecting to Codex. Pre-events runs report `"unknown"` with
-`journalOnly: true`.
+`"incomplete"` means no terminal record; use the runner process to distinguish
+an in-flight run from an interrupted one, and `lastEventAt` to assess staleness.
+Per-agent `status` comes from each agent's own terminal event. Unknown run ID:
+`run not found` on stderr, exit 1. Duplicate IDs are ambiguous. Resume also
+rejects workflow-name mismatches before connecting to Codex. Pre-events runs
+report `"unknown"` with `journalOnly: true`.
 
 ## Journal records
 

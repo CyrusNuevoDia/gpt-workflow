@@ -106,8 +106,22 @@ stream under
 `$CODEX_HOME/projects/<project>/workflows/<name>/runs/<runId>/events.jsonl`
 automatically.
 
-Read the terminal NDJSON record and its `journalPath`. Inspect runs without
-spending model tokens:
+Keep the runner process visible and capture `runId` and `runDirectory` from its
+first `run.started` record. Use that emitted directory instead of reconstructing
+the encoded project path. From another terminal, monitor the persisted run
+without spending model tokens:
+
+```sh
+bunx gpt-workflow@latest status <runId>
+tail -f "<runDirectory>/events.jsonl" | jq -c .
+```
+
+Poll `status` for a compact snapshot; tail `events.jsonl` only when the event
+sequence is useful. `"incomplete"` means no terminal record, not necessarily an
+active process: while the runner is alive it is in flight; after the runner
+exits, use `lastEventAt` to distinguish a stale interrupted run. Do not tail
+`journal.jsonl` for progress; it is replay state. After the run ends, read the
+terminal NDJSON record and its `journalPath`, or inspect it later with:
 
 ```sh
 bunx gpt-workflow@latest list
@@ -115,9 +129,8 @@ bunx gpt-workflow@latest status <runId>
 ```
 
 `list` prints one JSON line per run, newest first. `status` prints one JSON
-object with per-phase and per-agent progress and token totals. `"incomplete"`
-means no terminal record — in-flight and interrupted runs look identical;
-check `lastEventAt`. For a prior run ID:
+object with per-phase and per-agent progress and token totals. For a prior run
+ID:
 
 ```sh
 bunx gpt-workflow@latest run --default-model <the model you are running as> \
