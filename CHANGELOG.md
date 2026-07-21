@@ -1,5 +1,11 @@
 # gpt-workflow
 
+## 0.4.1
+
+### Patch Changes
+
+- 751a6c7: Add `--version` and `-V` flags to the CLI.
+
 ## 0.4.0
 
 ### Minor Changes

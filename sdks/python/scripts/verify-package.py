@@ -12,7 +12,7 @@ from pathlib import Path
 
 SDK = Path(__file__).resolve().parents[1]
 REPOSITORY = SDK.parents[1]
-EXPECTED_VERSION = "0.4.0"
+EXPECTED_VERSION = "0.4.1"
 
 
 def run(
