@@ -564,6 +564,23 @@ describe("inspection subcommands", () => {
 })
 
 describe("usage validation", () => {
+  test.each([
+    "--version",
+    "-V"
+  ])("%s prints the package version", async (flag) => {
+    const output: string[] = []
+    const errors: string[] = []
+    expect(
+      await runCLI([flag], {
+        readVersion: () => Promise.resolve("1.2.3"),
+        writeError: (text) => errors.push(text),
+        writeOutput: (text) => output.push(text)
+      })
+    ).toBe(0)
+    expect(output).toEqual(["1.2.3\n"])
+    expect(errors).toEqual([])
+  })
+
   test("documents all commands and keeps invalid invocations off stdout", async () => {
     const output: string[] = []
     expect(
@@ -581,6 +598,7 @@ describe("usage validation", () => {
     expect(output.join("")).toContain("--required-model <name>")
     expect(output.join("")).toContain("--thread-start-timeout-ms <ms>")
     expect(output.join("")).toContain("--turn-timeout-ms <ms>")
+    expect(output.join("")).toContain("-V, --version")
 
     const invalidOutput: string[] = []
     const errors: string[] = []

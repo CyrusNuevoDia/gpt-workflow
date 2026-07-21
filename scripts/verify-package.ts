@@ -318,6 +318,21 @@ async function verify(): Promise<{ paths: string[]; tarball: string }> {
         `installed package smoke returned unexpected output: ${smoke.trim() || "no output"}`
       )
     }
+    const packageManifest = JSON.parse(
+      await readFile(join(repository, "package.json"), "utf8")
+    ) as { version?: unknown }
+    const cliVersion = await run(
+      "installed CLI version smoke",
+      join(consumer, "node_modules", ".bin", "gpt-workflow"),
+      ["--version"],
+      consumer,
+      env
+    )
+    if (cliVersion.trim() !== packageManifest.version) {
+      throw new Error(
+        `installed CLI returned version ${JSON.stringify(cliVersion.trim())}, expected ${JSON.stringify(packageManifest.version)}`
+      )
+    }
     await writeFile(join(consumer, "smoke.ts"), typeSmokeSource)
     await writeFile(
       join(consumer, "tsconfig.json"),
@@ -467,7 +482,7 @@ try {
   }
   console.log(`Tarball: ${result.tarball}`)
   console.log(
-    "Smoke: SUCCESS (package import/types, offline execution, installed CLI NDJSON and journal)"
+    "Smoke: SUCCESS (package import/types, offline execution, installed CLI version, NDJSON and journal)"
   )
   console.log("GitHub remote install: NOT PROVEN")
 } catch (error) {

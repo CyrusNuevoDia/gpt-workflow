@@ -30,6 +30,10 @@ const USAGE = `Usage:
   gpt-workflow models
   gpt-workflow status <runId>
 
+Global options:
+  -h, --help                     Show help.
+  -V, --version                  Show the installed version.
+
 Run a workflow through Codex App Server. During a run, stdout is NDJSON and
 human-readable diagnostics are written to stderr.
 
@@ -81,6 +85,7 @@ type CLIDependencies = {
   parseWorkflow: (source: string, fileName: string) => LoadedWorkflowScript
   readRun: typeof readRunStatus
   readSource: (path: string) => Promise<string>
+  readVersion: () => Promise<string>
   runWorkflow: (
     source: string,
     options: WorkflowExecutionOptions
@@ -134,6 +139,7 @@ const defaultDependencies: CLIDependencies = {
   parseWorkflow: parseWorkflowScript,
   readRun: readRunStatus,
   readSource: (path) => Bun.file(path).text(),
+  readVersion: readPackageVersion,
   runWorkflow: runWorkflowScript,
   writeError: (text) => {
     Bun.stderr.write(text)
@@ -161,7 +167,8 @@ export function runCLI(
         "required-model": { multiple: true, type: "string" },
         resume: { type: "string" },
         "thread-start-timeout-ms": { type: "string" },
-        "turn-timeout-ms": { type: "string" }
+        "turn-timeout-ms": { type: "string" },
+        version: { short: "V", type: "boolean" }
       },
       strict: true
     })
@@ -173,6 +180,10 @@ export function runCLI(
   if (parsed.values.help) {
     dependencies.writeOutput(USAGE)
     return Promise.resolve(0)
+  }
+
+  if (parsed.values.version) {
+    return runVersion(dependencies)
   }
 
   const [command, ...positionals] = parsed.positionals
@@ -225,6 +236,45 @@ export function runCLI(
     )
   }
   return runWorkflowCommand(scriptArgument, parsed.values, dependencies)
+}
+
+async function runVersion(dependencies: CLIDependencies): Promise<number> {
+  try {
+    dependencies.writeOutput(`${await dependencies.readVersion()}\n`)
+    return 0
+  } catch (error) {
+    dependencies.writeError(`gpt-workflow: ${describe(error)}\n`)
+    return 1
+  }
+}
+
+async function readPackageVersion(): Promise<string> {
+  const manifestURLs = [
+    new URL("../package.json", import.meta.url),
+    new URL("../../package.json", import.meta.url)
+  ]
+  const manifests = await Promise.all(
+    manifestURLs.map(async (manifestURL) => {
+      const file = Bun.file(manifestURL)
+      return (await file.exists()) ? file.json() : null
+    })
+  )
+  for (const manifestValue of manifests) {
+    const manifest = manifestValue as {
+      name?: unknown
+      version?: unknown
+    } | null
+    if (manifest === null) {
+      continue
+    }
+    if (
+      manifest.name === "gpt-workflow" &&
+      typeof manifest.version === "string"
+    ) {
+      return manifest.version
+    }
+  }
+  throw new Error("could not read the installed package version")
 }
 
 async function runModels(dependencies: CLIDependencies): Promise<number> {
