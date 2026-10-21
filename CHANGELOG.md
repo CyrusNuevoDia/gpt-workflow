@@ -1,5 +1,11 @@
 # gpt-workflow
 
+## 0.4.2
+
+### Patch Changes
+
+- 6ee4090: Python SDK: `gpt_workflow.cwd` defaults to the resolved process working directory when unset (removing `WorkflowDirectoryUnset`), and `WorkflowResult` gains read-only `failures` and `failure_count` properties forwarded from its status.
+
 ## 0.4.1
 
 ### Patch Changes
