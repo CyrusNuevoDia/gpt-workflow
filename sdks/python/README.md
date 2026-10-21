@@ -21,9 +21,10 @@ python -m pip install gpt-workflow
 
 ## Run and inspect workflows
 
-Set `gpt_workflow.cwd` once to the repository that owns the workflow. It must
-be a `pathlib.Path`; relative script paths and durable run storage are resolved
-from it.
+`gpt_workflow.cwd` is the repository that owns the workflow; relative script
+paths and durable run storage are resolved from it. Left as `None`, it defaults
+to the process's resolved working directory at each call. Set it to a
+`pathlib.Path` to pin a different repository.
 
 ```python
 from pathlib import Path
@@ -39,6 +40,7 @@ execution = gpt_workflow.run(
 )
 
 print(execution.result)
+print(execution.failure_count, execution.failures)
 print(execution.status.run_id)
 print(execution.run_directory)
 
@@ -51,7 +53,10 @@ available_models = gpt_workflow.models()
 
 Omitting the second argument leaves workflow `args` undefined. Passing `None`
 sends explicit JSON `null`. `WorkflowResult` contains the JSON result, detailed
-`WorkflowStatus`, and durable run directory. `runs()` returns lightweight
+`WorkflowStatus`, and durable run directory; its `failures` and `failure_count`
+properties forward the status's agent failures, reading `[]` and `0` when the
+run recorded none. A completed run can still carry failures, because a failed
+`agent()` call resolves to `null` instead of failing the run. `runs()` returns lightweight
 summaries; `status()` loads detailed phase, agent, token, failure, and fallback
 journal state; `models()` returns unique canonical model names in CLI order.
 Unknown compatible JSON fields are retained in each value's `extra` mapping.
@@ -73,8 +78,8 @@ return { answer: 42 };
 ## Errors and interruption
 
 Configuration and validation fail before work starts with idiomatic exceptions:
-`WorkflowDirectoryUnset`, `FileNotFoundError`, `TypeError`, `ValueError`,
-`BunError`, or `CLIProtocolError`. Once a trustworthy run exists, failures use
+`FileNotFoundError`, `TypeError`, `ValueError`, `BunError`, or
+`CLIProtocolError`. Once a trustworthy run exists, failures use
 `WorkflowError` subclasses whose `status` and `run_directory` are always set.
 These distinguish invalid workflows and arguments, unavailable models, Codex
 App Server failures, budgets and limits, Git failures, JSON boundaries,

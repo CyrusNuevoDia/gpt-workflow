@@ -133,6 +133,41 @@ def test_normal_run_does_not_print_cli_output(
     assert captured.err == ""
 
 
+def test_unset_cwd_defaults_to_the_process_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_id = "workflow-default-cwd"
+    _install_fake_bunx(tmp_path, monkeypatch, run_record=True, run_id=run_id)
+    (tmp_path / "workflow.js").write_text("return true\n")
+    monkeypatch.chdir(tmp_path)
+
+    execution = gpt_workflow.run("workflow.js")
+
+    assert gpt_workflow.cwd is None
+    assert execution.run_directory == tmp_path.resolve() / "test-runs" / run_id
+
+
+def test_result_forwards_persisted_failures() -> None:
+    failures: list[gpt_workflow.JSONValue] = [{"kind": "agent", "message": "busy"}]
+    failed = gpt_workflow.WorkflowResult(
+        result=None,
+        status=gpt_workflow.WorkflowStatus(
+            run_id="failed", status="completed", failure_count=1, failures=failures
+        ),
+        run_directory=Path("failed"),
+    )
+    clean = gpt_workflow.WorkflowResult(
+        result=None,
+        status=gpt_workflow.WorkflowStatus(run_id="clean", status="completed"),
+        run_directory=Path("clean"),
+    )
+
+    assert failed.failures == failures
+    assert failed.failure_count == 1
+    assert clean.failures == []
+    assert clean.failure_count == 0
+
+
 def _install_fake_bunx(
     tmp_path: Path,
     monkeypatch: object,

@@ -132,3 +132,14 @@ class WorkflowResult:
     result: JSONValue
     status: WorkflowStatus
     run_directory: Path
+
+    @property
+    def failures(self) -> list[JSONValue]:
+        """Persisted agent failures, or an empty list when none were recorded."""
+        failures = self.status.failures
+        return list(failures) if isinstance(failures, list) else []
+
+    @property
+    def failure_count(self) -> int:
+        """Persisted failure count, or 0 when none was recorded."""
+        return self.status.failure_count or 0

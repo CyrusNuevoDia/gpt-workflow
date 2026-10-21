@@ -7,10 +7,6 @@ from pathlib import Path
 from ._types import WorkflowStatus
 
 
-class WorkflowDirectoryUnset(RuntimeError):
-    """The required module-global workflow directory was not configured."""
-
-
 class BunError(RuntimeError):
     """Bun or bunx could not start the synchronized CLI."""
 

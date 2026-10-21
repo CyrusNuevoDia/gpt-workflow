@@ -10,17 +10,6 @@ import pytest
 import gpt_workflow
 
 
-def test_unset_workflow_directory_fails_before_bun_is_started(tmp_path: Path) -> None:
-    script = tmp_path / "workflow.js"
-    script.write_text("return true\n")
-
-    with pytest.raises(
-        gpt_workflow.WorkflowDirectoryUnset,
-        match=r"gpt_workflow\.cwd",
-    ):
-        gpt_workflow.run(script)
-
-
 def test_missing_bun_raises_a_dependency_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

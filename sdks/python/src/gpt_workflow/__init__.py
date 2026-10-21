@@ -16,7 +16,6 @@ from ._errors import (
     JSONBoundaryError,
     ModelError,
     WorkflowCancelledError,
-    WorkflowDirectoryUnset,
     WorkflowError,
     WorkflowExecutionError,
     WorkflowInterrupted,
@@ -87,13 +86,12 @@ def models() -> list[str]:
 
 
 def _configured_cwd() -> Path:
-    if cwd is None:
-        raise WorkflowDirectoryUnset("gpt_workflow.cwd must be set to a Path")
-    if not isinstance(cwd, Path):
+    directory = Path.cwd().resolve() if cwd is None else cwd
+    if not isinstance(directory, Path):
         raise TypeError("gpt_workflow.cwd must be a Path")
-    if not cwd.is_dir():
-        raise FileNotFoundError(cwd)
-    return cwd
+    if not directory.is_dir():
+        raise FileNotFoundError(directory)
+    return directory
 
 
 __all__ = [
@@ -112,7 +110,6 @@ __all__ = [
     "WorkflowAgent",
     "WorkflowAgentCounts",
     "WorkflowCancelledError",
-    "WorkflowDirectoryUnset",
     "WorkflowError",
     "WorkflowExecutionError",
     "WorkflowInterrupted",

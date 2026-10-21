@@ -8,14 +8,17 @@ authenticated Codex CLI for workflows that call agents.
 
 ## Configure and call
 
-Set `gpt_workflow.cwd` once to a `pathlib.Path` for the repository that owns
-the workflow; relative script paths and durable run storage resolve from it.
-Calls without it raise `WorkflowDirectoryUnset`.
+`gpt_workflow.cwd` is the repository that owns the workflow; relative script
+paths and durable run storage resolve from it. Left as `None`, it defaults to
+the process's resolved working directory; set it to a `pathlib.Path` to pin
+another repository.
 
 - `run(script, args=UNSET, *, default_model=None, required_models=None,
   resume=None, request_timeout_ms=30_000, thread_start_timeout_ms=120_000,
   turn_timeout_ms=300_000)` blocks until the run ends and returns
-  `WorkflowResult` with `result`, detailed `status`, and `run_directory`.
+  `WorkflowResult` with `result`, detailed `status`, and `run_directory`, plus
+  `failures` and `failure_count` forwarded from the status (`[]` and `0` when
+  none were recorded; a completed run can still carry agent failures).
 - `runs()` returns lightweight `WorkflowSummary` values, newest first.
 - `status(run_id)` returns detailed `WorkflowStatus`: phases, agents, token
   totals, terminal `result` / `failures`, and fallback journal counts for
@@ -31,9 +34,8 @@ fields are retained in each value's `extra` mapping.
 
 ## Errors and interruption
 
-Failures before a trustworthy run exists raise `WorkflowDirectoryUnset`,
-`FileNotFoundError`, `TypeError`, `ValueError`, `BunError`, or
-`CLIProtocolError`. Once persisted status exists, failures raise
+Failures before a trustworthy run exists raise `FileNotFoundError`,
+`TypeError`, `ValueError`, `BunError`, or `CLIProtocolError`. Once persisted status exists, failures raise
 `WorkflowError` subclasses whose `status` and `run_directory` are always set:
 `InvalidWorkflowError`, `InvalidWorkflowArgumentError`, `ModelError`,
 `CodexAppServerError`, `WorkflowLimitExceededError` (and its subclass
