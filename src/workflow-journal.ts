@@ -41,8 +41,13 @@ export class WorkflowJournal {
     this.replayEntries = replayEntries
   }
 
-  static async open(directory: string): Promise<WorkflowJournal> {
-    await mkdir(directory, { recursive: true })
+  static async open(
+    directory: string,
+    resume = false
+  ): Promise<WorkflowJournal> {
+    if (!resume) {
+      await mkdir(directory, { recursive: true })
+    }
     const path = join(directory, "journal.jsonl")
     let source = ""
     try {
@@ -51,9 +56,15 @@ export class WorkflowJournal {
       if (!isMissingFile(error)) {
         throw error
       }
+      if (resume) {
+        throw new Error(
+          `Cannot resume: workflow journal not found at ${path}. Restore the journal or start a new run without --resume.`,
+          { cause: error }
+        )
+      }
+      await appendFile(path, "")
     }
-    await appendFile(path, "")
-    return new WorkflowJournal(directory, parseReplayEntries(source))
+    return new WorkflowJournal(directory, parseReplayEntries(source, path))
   }
 
   keyFor(prompt: string, options: JSONObject | undefined): string {
@@ -108,12 +119,12 @@ export function parseWorkflowJournalEntry(
   return value
 }
 
-function parseReplayEntries(source: string): Map<string, ReplayEntry[]> {
+function parseReplayEntries(
+  source: string,
+  path: string
+): Map<string, ReplayEntry[]> {
   const results = new Map<string, WorkflowJournalResultEntry[]>()
-  const lines = parseJournalLines(source)
-  if (!lines) {
-    return new Map()
-  }
+  const lines = parseJournalLines(source, path)
   for (const value of lines) {
     if (value.type === "result") {
       const entries = results.get(value.key) ?? []
@@ -150,16 +161,29 @@ function parseReplayEntries(source: string): Map<string, ReplayEntry[]> {
   return replay
 }
 
-function parseJournalLines(source: string): WorkflowJournalEntry[] | null {
+function parseJournalLines(
+  source: string,
+  path: string
+): WorkflowJournalEntry[] {
+  if (source.length === 0) {
+    return []
+  }
+  const sourceLines = source.split("\n")
+  if (!source.endsWith("\n")) {
+    throw new SyntaxError(
+      `Invalid workflow journal ${path} at line ${sourceLines.length}: missing terminating newline. Restore a complete journal or start a new run without --resume.`
+    )
+  }
+  sourceLines.pop()
   const lines: WorkflowJournalEntry[] = []
-  for (const line of source.split("\n")) {
-    if (line.trim().length === 0) {
-      continue
-    }
+  for (const [index, line] of sourceLines.entries()) {
     try {
       lines.push(parseWorkflowJournalEntry(line))
-    } catch {
-      return null
+    } catch (error) {
+      throw new SyntaxError(
+        `Invalid workflow journal ${path} at line ${index + 1}: ${(error as Error).message}. Restore a valid journal or start a new run without --resume.`,
+        { cause: error }
+      )
     }
   }
   return lines

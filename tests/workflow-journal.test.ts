@@ -1,8 +1,16 @@
 import { expect, test } from "bun:test"
-import { mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises"
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile
+} from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { pathToFileURL } from "node:url"
+import type { AppServerClient } from "../src/app-server.js"
 import {
   parseWorkflowJournalEntry,
   runWorkflowScript,
@@ -46,6 +54,151 @@ test("rejects blank, malformed, unknown, and invalid journal records", () => {
 
   for (const source of invalid) {
     expect(() => parseWorkflowJournalEntry(source)).toThrow(SyntaxError)
+  }
+})
+
+const completedJournal =
+  '{"type":"started","key":"v3:abc","agentId":"run:agent-1"}\n' +
+  '{"type":"result","key":"v3:abc","agentId":"run:agent-1","result":"saved"}\n'
+
+test.each([
+  { line: null, name: "missing", source: null },
+  { line: 1, name: "invalid first JSON", source: `{\n${completedJournal}` },
+  {
+    line: 2,
+    name: "invalid interior JSON",
+    source: completedJournal.replace("\n", "\n{\n")
+  },
+  {
+    line: 3,
+    name: "invalid trailing JSON",
+    source: `${completedJournal}{\n`
+  },
+  {
+    line: 3,
+    name: "invalid record schema",
+    source: `${completedJournal}{"type":"result","key":"v3:abc","agentId":"run:agent-2"}\n`
+  },
+  {
+    line: 2,
+    name: "blank interior record",
+    source: completedJournal.replace("\n", "\n\n")
+  },
+  {
+    line: 3,
+    name: "blank trailing record",
+    source: `${completedJournal}\n`
+  },
+  {
+    line: 2,
+    name: "unterminated valid record",
+    source: completedJournal.trimEnd()
+  },
+  {
+    line: 3,
+    name: "unterminated partial record",
+    source: `${completedJournal}{`
+  }
+])("resume rejects $name history before workflow or agent execution", async ({
+  source,
+  line
+}) => {
+  const directory = await mkdtemp(
+    join(tmpdir(), "gpt-workflow-invalid-journal-")
+  )
+  const path = join(directory, "journal.jsonl")
+  const events: unknown[] = []
+  let agentStarts = 0
+  const appServer = {
+    startAgent: () => {
+      agentStarts += 1
+      throw new Error("agent must not start")
+    }
+  } as unknown as AppServerClient
+  try {
+    if (source !== null) {
+      await writeFile(path, source)
+    }
+    let failure: unknown
+    try {
+      await runWorkflowScript(
+        "export const meta = { name: 'integrity', description: 'Resume integrity probe' }\nlog('body executed'); return await agent('work', { model: 'gpt-5.6-sol' })",
+        {
+          appServer,
+          onWorkflowEvent: (event) => events.push(event),
+          resumeFromRunId: "run",
+          runDirectory: directory
+        }
+      )
+    } catch (error) {
+      failure = error
+    }
+    expect(events).toEqual([])
+    expect(agentStarts).toBe(0)
+    expect(failure).toBeInstanceOf(Error)
+    expect((failure as Error).message).toContain(path)
+    if (line !== null) {
+      expect((failure as Error).message).toContain(`line ${line}`)
+    }
+    if (source === null) {
+      await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" })
+    } else {
+      expect(await readFile(path)).toEqual(Buffer.from(source))
+    }
+  } finally {
+    await rm(directory, { force: true, recursive: true })
+  }
+})
+
+test("fresh runs create empty journals that agentless runs can resume", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gpt-workflow-empty-journal-"))
+  const runDirectory = join(directory, "run")
+  const source =
+    "export const meta = { name: 'empty', description: 'Empty journal probe' }\nreturn true"
+  try {
+    const fresh = await runWorkflowScript(source, {
+      runDirectory,
+      workflowRunId: "run"
+    })
+    const resumed = await runWorkflowScript(source, {
+      resumeFromRunId: "run",
+      runDirectory
+    })
+    expect(fresh.result).toBe(true)
+    expect(resumed.result).toBe(true)
+    expect(await readFile(join(runDirectory, "journal.jsonl"), "utf8")).toBe("")
+  } finally {
+    await rm(directory, { force: true, recursive: true })
+  }
+})
+
+test("valid v2 journal keys remain cache misses on resume", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gpt-workflow-v2-journal-"))
+  const path = join(directory, "journal.jsonl")
+  const history = completedJournal.replaceAll("v3:", "v2:")
+  let liveCalls = 0
+  try {
+    await writeFile(path, history)
+    const execution = await runWorkflowScript(
+      "export const meta = { name: 'legacy', description: 'Legacy journal key probe' }\nreturn await agent('work')",
+      {
+        agent: () => {
+          liveCalls += 1
+          return "live"
+        },
+        resumeFromRunId: "run",
+        runDirectory: directory
+      }
+    )
+    expect(execution.result).toBe("live")
+    expect(liveCalls).toBe(1)
+    expect(execution.usage).toMatchObject({
+      liveAgentCount: 1,
+      replayedAgentCount: 0
+    })
+    expect((await readFile(path, "utf8")).startsWith(history)).toBe(true)
+  } finally {
+    await rm(directory, { force: true, recursive: true })
   }
 })
 

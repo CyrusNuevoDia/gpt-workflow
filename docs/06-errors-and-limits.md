@@ -86,6 +86,13 @@ is recorded.
 
 ## Journal parse failures
 
+Resume requires an existing, valid journal. A missing journal, an invalid record
+(including a blank line), or a nonempty file without a terminating newline
+rejects the run before the workflow body executes or an agent connects or starts.
+The error includes the journal path and, for invalid content, its line number.
+The runtime leaves the journal unchanged. Restore a valid journal or start a new
+run without `--resume`; an empty journal is valid.
+
 `parseWorkflowJournalEntry` throws `SyntaxError` for blank text, malformed JSON,
 unknown `type`, non-string `key` or `agentId`, a missing `result`, or a result
 that is not valid JSON data. Catch per line if inspecting a damaged journal; do

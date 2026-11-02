@@ -906,7 +906,12 @@ export async function runWorkflowScript(
     options
   )
   const journal =
-    runDirectory === null ? null : await WorkflowJournal.open(runDirectory)
+    runDirectory === null
+      ? null
+      : await WorkflowJournal.open(
+          runDirectory,
+          options.resumeFromRunId !== undefined
+        )
   const agentEvents: AppServerNormalizedEvent[] = []
   const context: WorkflowRunContext = {
     agentEvents,
