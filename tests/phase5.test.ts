@@ -252,6 +252,76 @@ test("cancellation is shared with queued child work", async () => {
   await expect(promise).rejects.toMatchObject({ name: "WorkflowCanceledError" })
 })
 
+test.each([
+  ["succeeds", false],
+  ["rejects", true]
+])("cancellation interrupts a handle acquired after abort when interrupt %s", async (_interruptOutcome, interruptRejects) => {
+  const directory = await mkdtemp(join(tmpdir(), "gpt-workflow-late-start-"))
+  const controller = new AbortController()
+  const startup = Promise.withResolvers<AppServerAgentHandle>()
+  const startupEntered = Promise.withResolvers<void>()
+  const startedPrompts: string[] = []
+  let interruptCalls = 0
+  let startCallbacks = 0
+  let resultCalls = 0
+  const handle = fakeHandle("late-result")
+  const lateHandle: AppServerAgentHandle = {
+    ...handle,
+    interrupt: () => {
+      interruptCalls += 1
+      return interruptRejects
+        ? Promise.reject(new Error("interrupt transport failed"))
+        : Promise.resolve()
+    },
+    result: () => {
+      resultCalls += 1
+      return handle.result()
+    }
+  }
+  const appServer = {
+    startAgent: (prompt: string) => {
+      startedPrompts.push(prompt)
+      startupEntered.resolve()
+      return startup.promise
+    }
+  } as unknown as AppServerClient
+  try {
+    const execution = runWorkflowScript(
+      script(`
+        return await parallel([
+          () => agent('first'),
+          () => agent('second'),
+        ])
+      `),
+      {
+        appServer,
+        caps: { maxConcurrentAgents: 1 },
+        onAgentStart: () => {
+          startCallbacks += 1
+        },
+        runDirectory: join(directory, "run"),
+        signal: controller.signal
+      }
+    )
+    const outcome = execution.then(
+      () => null,
+      (error: unknown) => error
+    )
+    await startupEntered.promise
+    controller.abort()
+    startup.resolve(lateHandle)
+    expect(await outcome).toMatchObject({ name: "WorkflowCanceledError" })
+    // Queued cancellation can reject the run before late startup settles.
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(interruptCalls).toBe(1)
+    expect(startedPrompts).toEqual(["first"])
+    expect(startCallbacks).toBe(0)
+    expect(resultCalls).toBe(0)
+  } finally {
+    await rm(directory, { force: true, recursive: true })
+  }
+})
+
 test("worktree isolation propagates exact cwd and removes only clean worktrees", async () => {
   const repository = await mkdtemp(
     join(tmpdir(), "gpt-workflow-worktree-repo-")

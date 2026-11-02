@@ -985,6 +985,82 @@ test("runWorkflowScript uses the App Server client when no offline agent stub is
   }
 })
 
+test("canceled late startup owns interrupted results without an unhandled rejection", async () => {
+  const runDirectory = await mkdtemp(
+    join(tmpdir(), "gpt-workflow-late-app-server-")
+  )
+  const controller = new AbortController()
+  const startupEntered = Promise.withResolvers<void>()
+  const releaseStartup = Promise.withResolvers<void>()
+  const interrupted = Promise.withResolvers<string>()
+  let startCallbacks = 0
+  const { client, process } = await connectFake(async (message, transport) => {
+    if (message.method === "model/list") {
+      modelListHandler(message, transport)
+    } else if (message.method === "thread/start") {
+      transport.respond({
+        id: message.id,
+        result: { model: "gpt-5.6-luna", thread: { id: "thread-late" } }
+      })
+    } else if (message.method === "turn/start") {
+      startupEntered.resolve()
+      await releaseStartup.promise
+      transport.respond({
+        id: message.id,
+        result: { turn: { id: "turn-late" } }
+      })
+    } else if (message.method === "turn/interrupt") {
+      transport.respond({ id: message.id, result: {} })
+      transport.respond({
+        method: "turn/completed",
+        params: {
+          threadId: "thread-late",
+          turn: { error: null, id: "turn-late", status: "interrupted" }
+        }
+      })
+    }
+  })
+  try {
+    const outcome = runWorkflowScript(
+      "export const meta = { name: 'late', description: 'late startup' }\nreturn await parallel([() => agent('first', { model: 'gpt-5.6-luna' }), () => agent('second', { model: 'gpt-5.6-luna' })])",
+      {
+        appServer: client,
+        caps: { maxConcurrentAgents: 1 },
+        onAgentEvent: (event) => {
+          if (event.type === "terminal") {
+            interrupted.resolve(event.status)
+          }
+        },
+        onAgentStart: () => {
+          startCallbacks += 1
+        },
+        runDirectory,
+        signal: controller.signal
+      }
+    ).then(
+      () => null,
+      (error: unknown) => error
+    )
+    await startupEntered.promise
+    controller.abort()
+    releaseStartup.resolve()
+    expect(await outcome).toMatchObject({ name: "WorkflowCanceledError" })
+    expect(await interrupted.promise).toBe("interrupted")
+    // Let the host detect any unobserved eager result rejection after the turn.
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(startCallbacks).toBe(0)
+    expect(
+      process.messages.filter((message) => message.method === "turn/start")
+    ).toHaveLength(1)
+    expect(
+      process.messages.filter((message) => message.method === "turn/interrupt")
+    ).toHaveLength(1)
+  } finally {
+    await client.close()
+    await rm(runDirectory, { force: true, recursive: true })
+  }
+})
+
 test("throwing progress observers do not fail the App Server transport or active turn", async () => {
   const { client } = await connectFake(agentHandler("observer-safe"), {
     requiredModels: ["gpt-5.6-luna"]

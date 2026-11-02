@@ -1344,6 +1344,9 @@ export class AppServerClient {
         execution.rejectResult = reject
       }
     )
+    // Startup can fail or be canceled before a caller receives the handle.
+    // Observe eager failures while preserving the original promise for result().
+    execution.resultPromise.catch(() => undefined)
     return execution
   }
 

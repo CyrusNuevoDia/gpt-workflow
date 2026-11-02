@@ -275,6 +275,10 @@ export class WorkflowRunState {
   }
 
   registerHandle(handle: AppServerAgentHandle): () => void {
+    if (this.signal.aborted) {
+      handle.interrupt().catch(() => undefined)
+      throw new WorkflowCanceledError()
+    }
     this.activeHandles.add(handle)
     return () => this.activeHandles.delete(handle)
   }
