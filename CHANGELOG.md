@@ -1,5 +1,11 @@
 # gpt-workflow
 
+## 0.4.3
+
+### Patch Changes
+
+- bfd4218: Reject missing or damaged resume journals before executing work, and interrupt agents whose startup completes after cancellation.
+
 ## 0.4.2
 
 ### Patch Changes
