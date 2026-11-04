@@ -1,5 +1,11 @@
 # gpt-workflow
 
+## 0.4.4
+
+### Patch Changes
+
+- 4572f5f: Run status in the CLI and the TypeScript and Python SDKs now shows phase totals for the latest attempt and includes the error name and message when that attempt fails.
+
 ## 0.4.3
 
 ### Patch Changes
