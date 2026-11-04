@@ -35,6 +35,7 @@ from ._types import (
     WorkflowPhase,
     WorkflowResult,
     WorkflowStatus,
+    WorkflowStatusError,
     WorkflowSummary,
     WorkflowTokenTotals,
 )
@@ -118,6 +119,7 @@ __all__ = [
     "WorkflowPhase",
     "WorkflowResult",
     "WorkflowStatus",
+    "WorkflowStatusError",
     "WorkflowSummary",
     "WorkflowTokenTotals",
     "cwd",

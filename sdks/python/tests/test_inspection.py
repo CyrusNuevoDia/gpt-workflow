@@ -25,7 +25,53 @@ def test_status_decodes_every_persisted_run_state(
     )
     gpt_workflow.cwd = tmp_path
 
-    assert gpt_workflow.status("workflow-state").status == state
+    status = gpt_workflow.status("workflow-state")
+
+    assert status.status == state
+    assert status.error is gpt_workflow.UNSET
+
+
+def test_status_decodes_structured_run_error(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    _install_single_record_cli(
+        tmp_path,
+        monkeypatch,
+        {
+            "runId": "workflow-failed",
+            "status": "failed",
+            "error": {"name": "WorkflowLoadError", "message": "Invalid workflow"},
+        },
+    )
+    gpt_workflow.cwd = tmp_path
+
+    status = gpt_workflow.status("workflow-failed")
+
+    assert status.error == gpt_workflow.WorkflowStatusError(
+        name="WorkflowLoadError", message="Invalid workflow"
+    )
+    assert status.failures is gpt_workflow.UNSET
+    assert status.extra == {}
+
+
+def test_status_rejects_malformed_run_error(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    _install_single_record_cli(
+        tmp_path,
+        monkeypatch,
+        {
+            "runId": "workflow-failed",
+            "status": "failed",
+            "error": {"name": "WorkflowLoadError", "message": 42},
+        },
+    )
+    gpt_workflow.cwd = tmp_path
+
+    with pytest.raises(gpt_workflow.CLIProtocolError, match="message must be a string"):
+        gpt_workflow.status("workflow-failed")
 
 
 def test_models_returns_unique_canonical_names_in_cli_order(

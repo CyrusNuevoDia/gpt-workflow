@@ -57,18 +57,29 @@ journal but no `events.jsonl` — recorded by an older CLI — reports
 `status: "unknown"` with `journalOnly: true`. A missing runs directory
 resolves to an empty array; other filesystem errors reject.
 
-`readRunStatus(cwd, runId)` reads one run's `events.jsonl` in full and
-resolves to `RunStatus`: the `RunSummary` fields plus ordered `phases` (each
-`{title, detail, agents: {started, completed, failed}, tokens}`, where
-`tokens` is a `RunTokenTotals` of `inputTokens`, `cachedInputTokens`,
-`outputTokens`, `reasoningOutputTokens`, and `totalTokens`), `agents` (each
-`{agentId, label, phase, model, status, tokens}`), and `failures` and
-`result` once the run ended. A run with no terminal record is
-`"incomplete"` — in-flight and interrupted runs are indistinguishable on
-disk. Each agent's `status` comes from its own persisted terminal event, so
-an interrupted run still shows which agents completed or failed, and its
-`tokens` is the latest cumulative usage snapshot from the App Server, not a
-sum. A journal-only run resolves to `JournalRunStatus`
+`readRunStatus(cwd, runId)` reads one run's events file in full and resolves
+to `RunStatus`. It keeps the original run's identity and start metadata and
+shows the latest invocation's `phases` and `agents`. Each phase has
+`{title, detail, agents: {started, completed, failed}, tokens}`. There is one
+row per title, in first declaration order, with the detail from the first
+declaration. Each agent has `{agentId, label, phase, model, status, tokens}`.
+Phase counts and token totals reflect live activity in that invocation.
+Replayed calls are reflected in `usage` when the invocation completes.
+
+`RunTokenTotals` contains `inputTokens`, `cachedInputTokens`, `outputTokens`,
+`reasoningOutputTokens`, and `totalTokens`. An agent's `tokens` field holds
+its latest cumulative App Server usage snapshot. Each agent's status comes
+from its own persisted events, so an interrupted invocation still shows
+which agents completed or failed.
+
+A completed invocation reports `failures` and `result`. A failed invocation
+reports `error: {name, message}` when the events file includes it. Older
+failed runs may omit `error`. If the latest invocation has no terminal
+record, its status is `"incomplete"` and it omits any earlier invocation's
+terminal payload. In-flight and interrupted invocations are indistinguishable
+on disk.
+
+A journal-only run resolves to `JournalRunStatus`
 (`{runId, status: "unknown", journalOnly: true, journal: {started, results,
 unmatched}}`); an unknown or malformed `runId` resolves to `null`.
 `RunInspectionStatus` is the union of both shapes.

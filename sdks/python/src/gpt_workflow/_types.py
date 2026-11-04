@@ -104,6 +104,14 @@ class WorkflowSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class WorkflowStatusError:
+    """Structured error from a failed workflow run."""
+
+    name: str
+    message: str
+
+
+@dataclass(frozen=True, slots=True)
 class WorkflowStatus:
     """Detailed persisted state for one workflow run."""
 
@@ -123,6 +131,7 @@ class WorkflowStatus:
     journal_only: bool = False
     journal: WorkflowJournalCounts | None = None
     extra: Mapping[str, JSONValue] = field(default_factory=_empty_extra)
+    error: WorkflowStatusError | Unset = field(default=UNSET, kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)

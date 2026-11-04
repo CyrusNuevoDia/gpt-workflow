@@ -231,6 +231,109 @@ describe("run inspection", () => {
     expect(status.agents[1]?.status).toBe("incomplete")
   })
 
+  test("resets agent detail on resume and groups repeated phase titles", async () => {
+    const cwd = await makeTemporaryDirectory()
+    const runId = "resumed"
+    const phase = (ts: number, detail: string) =>
+      eventRecord("workflow.event", runId, ts, {
+        event: { event: { detail, title: "Build", type: "phase" } }
+      })
+    await writeEvents(cwd, runId, [
+      startedRecord(runId, 10),
+      phase(11, "Original"),
+      agentRecord(runId, 12, "agent-1", {
+        status: "failed",
+        type: "terminal",
+        usage: { total: { totalTokens: 100 } }
+      }),
+      agentRecord(runId, 13, "agent-2", {
+        status: "completed",
+        type: "terminal",
+        usage: { total: { totalTokens: 200 } }
+      }),
+      terminalRecord("run.failed", runId, 14, {
+        error: { message: "Old failure", name: "Error" }
+      }),
+      startedRecord(runId, 20),
+      phase(21, "First declaration"),
+      agentRecord(runId, 22, "agent-1", {
+        lifecycle: "started",
+        type: "lifecycle"
+      }),
+      phase(23, "Repeated declaration"),
+      agentRecord(runId, 24, "agent-1", {
+        type: "usage",
+        usage: { total: { totalTokens: 3 } }
+      }),
+      agentRecord(runId, 25, "agent-1", {
+        type: "usage",
+        usage: { total: { totalTokens: 5 } }
+      })
+    ])
+
+    const status = await readRunStatus(cwd, runId)
+    expect(status).toMatchObject({
+      agents: [{ agentId: "agent-1", status: "incomplete" }],
+      phases: [
+        {
+          agents: { completed: 0, failed: 0, started: 1 },
+          detail: "First declaration",
+          title: "Build",
+          tokens: { totalTokens: 5 }
+        }
+      ],
+      startedAt: 10,
+      status: "incomplete"
+    })
+    expect(status).not.toHaveProperty("error")
+  })
+
+  test("reports only the latest invocation's terminal payload", async () => {
+    const cwd = await makeTemporaryDirectory()
+    const runId = "resumed-terminal"
+    const error = { message: "Retry failed", name: "Error" }
+    const failures = [{ kind: "agent", message: "Child agent failed" }]
+    const records = [
+      startedRecord(runId, 10),
+      terminalRecord("run.failed", runId, 11, {
+        error: { message: "Original failure", name: "Error" }
+      }),
+      startedRecord(runId, 20)
+    ]
+    await writeEvents(cwd, runId, [
+      ...records,
+      terminalRecord("run.failed", runId, 21, { error })
+    ])
+    await expect(readRunStatus(cwd, runId)).resolves.toMatchObject({
+      error,
+      failureCount: 1,
+      status: "failed"
+    })
+
+    await writeEvents(cwd, runId, [
+      ...records,
+      terminalRecord("run.failed", runId, 21, { error }),
+      startedRecord(runId, 30),
+      terminalRecord("run.completed", runId, 31, { failures, result: null })
+    ])
+    const completed = await readRunStatus(cwd, runId)
+    expect(completed).toMatchObject({
+      failureCount: 1,
+      failures,
+      result: null,
+      status: "completed"
+    })
+    expect(completed).not.toHaveProperty("error")
+
+    await writeEvents(cwd, runId, [
+      ...records,
+      terminalRecord("run.failed", runId, 21, {
+        error: { message: 17, name: "Error" }
+      })
+    ])
+    expect(await readRunStatus(cwd, runId)).not.toHaveProperty("error")
+  })
+
   test("skips malformed trailing event data and counts journal fallback records", async () => {
     const cwd = await makeTemporaryDirectory()
     await writeEvents(

@@ -58,6 +58,7 @@ export type RunPhase = {
 
 export type RunStatus = RunSummary & {
   agents: RunAgent[]
+  error?: { message: string; name: string }
   failures?: AppServerJSONValue
   phases: RunPhase[]
   result?: AppServerJSONValue
@@ -291,7 +292,7 @@ function buildRunStatus(runId: string, records: EventRecord[]): RunStatus {
   const status: RunStatus = {
     ...summary,
     agents: makeRunAgents(agents),
-    phases
+    phases: [...phases.values()]
   }
   copyTerminalPayload(status, last)
   return status
@@ -301,25 +302,28 @@ function collectRunRecords(records: EventRecord[]): {
   agents: Map<string, MutableAgent>
   first: EventRecord | null
   last: EventRecord | null
-  phases: RunPhase[]
+  phases: Map<string, RunPhase>
   started: EventRecord | null
 } {
   let first: EventRecord | null = null
   let started: EventRecord | null = null
   let last: EventRecord | null = null
-  const phases: RunPhase[] = []
+  const phases = new Map<string, RunPhase>()
   const agents = new Map<string, MutableAgent>()
 
   for (const record of records) {
     first ??= record
     last = record
-    if (started === null && record.type === "run.started") {
-      started = record
+    if (record.type === "run.started") {
+      started ??= record
+      phases.clear()
+      agents.clear()
+      continue
     }
     if (record.type === "workflow.event") {
       const phase = readPhase(record)
-      if (phase !== null) {
-        phases.push(phase)
+      if (phase !== null && !phases.has(phase.title)) {
+        phases.set(phase.title, phase)
       }
       continue
     }
@@ -362,24 +366,23 @@ function makeRunAgents(agents: Map<string, MutableAgent>): RunAgent[] {
 }
 
 function rollUpPhases(
-  phases: RunPhase[],
+  phases: Map<string, RunPhase>,
   agents: Map<string, MutableAgent>
 ): void {
-  for (const phase of phases) {
-    for (const agent of agents.values()) {
-      if (agent.phase !== phase.title) {
-        continue
-      }
-      if (agent.started) {
-        phase.agents.started += 1
-      }
-      if (agent.terminalStatus === "completed") {
-        phase.agents.completed += 1
-      } else if (agent.terminalStatus === "failed") {
-        phase.agents.failed += 1
-      }
-      addTokenTotals(phase.tokens, agent.tokens)
+  for (const agent of agents.values()) {
+    const phase = agent.phase === null ? undefined : phases.get(agent.phase)
+    if (phase === undefined) {
+      continue
     }
+    if (agent.started) {
+      phase.agents.started += 1
+    }
+    if (agent.terminalStatus === "completed") {
+      phase.agents.completed += 1
+    } else if (agent.terminalStatus === "failed") {
+      phase.agents.failed += 1
+    }
+    addTokenTotals(phase.tokens, agent.tokens)
   }
 }
 
@@ -387,7 +390,17 @@ function copyTerminalPayload(
   status: RunStatus,
   last: EventRecord | null
 ): void {
-  if (last !== null && status.status !== "incomplete") {
+  if (last?.type === "run.failed") {
+    const { error } = last
+    if (
+      isRecord(error) &&
+      typeof error.name === "string" &&
+      typeof error.message === "string"
+    ) {
+      status.error = { message: error.message, name: error.name }
+    }
+  }
+  if (last?.type === "run.completed") {
     if (Object.hasOwn(last, "failures")) {
       status.failures = last.failures as AppServerJSONValue
     }

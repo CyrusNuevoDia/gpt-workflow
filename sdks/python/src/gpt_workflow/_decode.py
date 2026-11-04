@@ -19,6 +19,7 @@ from ._types import (
     WorkflowJournalCounts,
     WorkflowPhase,
     WorkflowStatus,
+    WorkflowStatusError,
     WorkflowSummary,
     WorkflowTokenTotals,
 )
@@ -80,6 +81,7 @@ def workflow_status(record: Record) -> WorkflowStatus:
     """Decode one detailed or journal-only status record."""
     known = {
         "agents",
+        "error",
         "failureCount",
         "failures",
         "finishedAt",
@@ -101,6 +103,7 @@ def workflow_status(record: Record) -> WorkflowStatus:
         agents=tuple(
             _workflow_agent(_record(value, "agent")) for value in agent_values
         ),
+        error=_workflow_status_error(record["error"]) if "error" in record else UNSET,
         extra=_extra(record, known),
         failure_count=_optional_int(record.get("failureCount")),
         failures=_optional_json_field(record, "failures"),
@@ -118,6 +121,14 @@ def workflow_status(record: Record) -> WorkflowStatus:
         started_at=_optional_int(record.get("startedAt")),
         status=_run_state(record.get("status")),
         usage=_json(record.get("usage")),
+    )
+
+
+def _workflow_status_error(value: object) -> WorkflowStatusError:
+    record = _record(value, "error")
+    return WorkflowStatusError(
+        name=_string(record, "name"),
+        message=_string(record, "message"),
     )
 
 
