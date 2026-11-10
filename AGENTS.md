@@ -42,3 +42,5 @@ parity ledger lives at `docs/08-claude-parity.md`.
 copy-runnable examples, in-section failure semantics, and token-spend
 labeling. `README.md` is written for someone discovering the project for the
 first time; developer instructions belong here, not there.
+
+This codebase is yours: what it's for and how it's built are your call, and you'll keep building on it.
